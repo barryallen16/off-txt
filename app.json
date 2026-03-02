@@ -2,6 +2,10 @@
   "expo": {
     "name": "off-txt",
     "slug": "off-txt",
+    "scheme": "off-txt",
+    "experiments": {
+      "typedRoutes": true
+    },
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/off-txt-logo-dark.png",
@@ -42,7 +46,14 @@
           "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera",
           "barcodeScannerEnabled": true
         }
-      ]
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Allow $(PRODUCT_NAME) to access your contacts."
+        }
+      ],
+      "expo-router"
     ]
   }
 }
