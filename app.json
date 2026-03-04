@@ -60,7 +60,8 @@
         }
       ],
       "expo-router",
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-build-properties"
     ],
     "extra": {
       "router": {},
