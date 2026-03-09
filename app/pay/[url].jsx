@@ -1,160 +1,207 @@
-import { StatusBar } from "expo-status-bar";
+import { useMemo, useState } from "react";
 import {
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
   StyleSheet,
   Text,
-  View,
   TextInput,
-  KeyboardAvoidingView,
-  Pressable,
-  Image,
-  ScrollView,
-  Platform,
+  View,
 } from "react-native";
-import Ionicons from "@expo/vector-icons/Ionicons";
 import { SafeAreaView } from "react-native-safe-area-context";
-import * as SplashScreen from "expo-splash-screen";
-import { useEffect, useState } from "react";
-import { useFonts } from "expo-font";
-import OffTxtSvg from "../../assets/off-txt-img.svg";
-import { useLocalSearchParams } from "expo-router";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
+import AppButton from "../../components/AppButton";
+import AppHeader from "../../components/AppHeader";
+import PixelIcon from "../../components/PixelIcon";
+import { colors, radius, space, type } from "../../lib/theme";
+import { buildRequestLink, parseUpiLink, validateAmount } from "../../lib/upi";
 
-export default function PaymentScreen() {
-  SplashScreen.preventAutoHideAsync();
-  const { baseUrl } = useLocalSearchParams();
+export default function AmountScreen() {
+  const { url } = useLocalSearchParams();
+  const link = typeof url === "string" ? url : "";
+  const parsed = useMemo(() => parseUpiLink(link), [link]);
   const [amount, setAmount] = useState("");
-  const [note, setNote] = useState("");
-  const [loaded, error] = useFonts({
-    TitleFont: require("../../assets/fonts/BebasNeue-Regular.ttf"),
-    BodyFont: require("../../assets/fonts/UbuntuMono-Regular.ttf"),
-  });
 
-  useEffect(() => {
-    if (loaded || error) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded, error]);
+  const hasAmountInLink = parsed.valid && parsed.am != null;
+  const check = validateAmount(amount, parsed.mam);
+  const willStripSignature = parsed.valid && parsed.signed && !hasAmountInLink;
 
-  if (!loaded && !error) {
-    return null;
+  const goBack = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/");
+  };
+
+  const continueToRecipients = () => {
+    if (!check.valid) return;
+    const { link: requestLink } = buildRequestLink(link, check.amount);
+    router.push({ pathname: "/recipients", params: { link: requestLink } });
+  };
+
+  if (!parsed.valid) {
+    return (
+      <SafeAreaView style={styles.screen} edges={["bottom"]}>
+        <AppHeader title="Amount" onBack={goBack} />
+        <View style={styles.invalid}>
+          <PixelIcon name="shield" size={24} color={colors.muted} />
+          <Text style={[type.body, styles.center]}>{parsed.reason}</Text>
+          <AppButton label="Scan again" onPress={() => router.replace("/")} />
+        </View>
+      </SafeAreaView>
+    );
   }
+
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "red" }}>
+    <SafeAreaView style={styles.screen} edges={["bottom"]}>
+      <AppHeader title="Amount" onBack={goBack} />
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.screen}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={{
-            flexGrow: 1,
-            alignItems: "center",
-            justifyContent: "center",
-          }}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
         >
-          <OffTxtSvg width={32} style={styles.txtLogo} />
-          <Text
-            style={{
-              fontWeight: "condensedBold",
-              fontFamily: "BodyFont",
-              fontSize: 16,
-            }}
-          >
-            Requesting Money for
-            <Text style={{ fontWeight: "bold" }}> 6369605616</Text>
-          </Text>
-          <View style={styles.amountContainer}>
-            <Text style={styles.rupeesSymbol}>₹</Text>
-            <TextInput
-              value={amount}
-              placeholder="0"
-              style={styles.textinput}
-              onChangeText={setAmount}
-              autoCorrect={false}
-              keyboardType="numeric"
-            />
+          <View style={styles.payee}>
+            <Text style={type.label}>REQUESTING FROM</Text>
+            <Text style={type.bodyMedium} numberOfLines={1}>
+              {parsed.pn || parsed.pa}
+            </Text>
+            <Text style={type.muted} numberOfLines={1}>
+              {parsed.pa}
+            </Text>
           </View>
 
-          <TextInput
-            value={note}
-            placeholder="note"
-            style={{
-              ...styles.textinput,
-              fontSize: 20,
-              backgroundColor: "yellow",
-              borderRadius: 8,
-              paddingVertical: 8,
-              paddingHorizontal: 8,
-            }}
-            onChangeText={setNote}
-            keyboardType="default"
-          />
-          <StatusBar style="auto" />
+          <View style={styles.amountBlock}>
+            <Text style={[type.label, styles.amountLabel]}>AMOUNT</Text>
+            {hasAmountInLink ? (
+              <View style={styles.readonlyRow}>
+                <Text style={styles.currency}>₹</Text>
+                <Text style={type.amount}>{parsed.am}</Text>
+              </View>
+            ) : (
+              <View style={styles.inputRow}>
+                <Text style={styles.currency}>₹</Text>
+                <TextInput
+                  value={amount}
+                  onChangeText={setAmount}
+                  placeholder="0"
+                  placeholderTextColor={colors.muted}
+                  style={[type.amount, styles.input]}
+                  keyboardType="decimal-pad"
+                  autoFocus
+                  maxLength={12}
+                  accessibilityLabel="Amount in rupees"
+                />
+              </View>
+            )}
 
-          {/* <View
-        style={{
-          backgroundColor: "yellow",
-          padding: 8,
-          borderRadius: 60,
-          flexDirection: "row",
-          gap: 4,
+            <View style={styles.rule} />
 
-          alignItems: "center",
-        }}
-      >
-        <Ionicons name="scan" size={24} color="black" />
-        <Text style={{ fontWeight: "bold" }}>Scan</Text>
-      </View> */}
+            {parsed.mam != null ? (
+              <Text style={type.muted}>Minimum amount is ₹{parsed.mam}</Text>
+            ) : null}
+
+            {!hasAmountInLink && amount.length > 0 && !check.valid ? (
+              <Text style={[type.muted, styles.errorText]}>{check.reason}</Text>
+            ) : null}
+
+            {willStripSignature ? (
+              <View style={styles.notice}>
+                <PixelIcon name="shield" size={16} color={colors.muted} />
+                <Text style={[type.muted, styles.noticeText]}>
+                  Your UPI app may ask you to verify this request.
+                </Text>
+              </View>
+            ) : null}
+          </View>
         </ScrollView>
-        <Pressable
-          style={{
-            backgroundColor: "yellow",
-            padding: 8,
-            borderRadius: 16,
-            alignSelf: "flex-end",
-            marginRight: 16,
-            marginBottom: 8,
-          }}
-          onPress={() => {
-            router.push({
-              pathname: "ContactsScreen",
-              params: { fullPayUrl: baseUrl + "&am=" + amount },
-            });
-          }}
-        >
-          <Ionicons name="arrow-forward" size={30} color="black" />
-        </Pressable>
+
+        <View style={styles.footer}>
+          <AppButton
+            label="Continue"
+            onPress={continueToRecipients}
+            disabled={!hasAmountInLink && !check.valid}
+          />
+        </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  txtLogo: {
+  screen: {
     flex: 1,
-    backgroundColor: "red",
+    backgroundColor: colors.bg,
   },
-  container: {
-    flex: 1,
-    backgroundColor: "red",
+  content: {
+    flexGrow: 1,
+    padding: space.lg,
+    gap: space.xl,
   },
-  amountContainer: {
+  payee: {
+    gap: space.xs,
+    paddingBottom: space.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  amountBlock: {
+    gap: space.md,
+  },
+  amountLabel: {
+    marginBottom: space.xs,
+  },
+  inputRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: space.sm,
   },
-  textinput: {
+  readonlyRow: {
+    flexDirection: "row",
     alignItems: "center",
-    borderColor: "#0e0e0e",
-    fontFamily: "TitleFont",
-    fontSize: 80,
+    gap: space.sm,
   },
-  titleText: {
-    fontFamily: "TitleFont",
-    fontSize: 40,
+  currency: {
+    fontFamily: type.amount.fontFamily,
+    fontSize: 28,
+    color: colors.muted,
   },
-  rupeesSymbol: {
-    fontFamily: "TitleFont",
-    fontSize: 80,
-    marginRight: 8,
+  input: {
+    flex: 1,
+    padding: 0,
+    color: colors.text,
+  },
+  rule: {
+    height: 1,
+    backgroundColor: colors.line,
+  },
+  errorText: {
+    color: colors.danger,
+  },
+  notice: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    padding: space.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: radius,
+  },
+  noticeText: {
+    flex: 1,
+  },
+  footer: {
+    padding: space.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+  },
+  invalid: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: space.lg,
+    padding: space.xl,
+  },
+  center: {
+    textAlign: "center",
   },
 });

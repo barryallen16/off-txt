@@ -1,58 +1,186 @@
-import "expo-router/entry"; // This tells Expo Router to take over the UI
-import { AppRegistry } from "react-native";
-import RNAndroidNotificationListener, { RNAndroidNotificationListenerHeadlessJsName } from "react-native-android-notification-listener";
-import * as SQLite from "expo-sqlite";
-import * as Notifications from "expo-notifications";
+import { useCallback, useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import { router, useFocusEffect } from "expo-router";
+import AppButton from "../components/AppButton";
+import AppHeader from "../components/AppHeader";
+import IconButton from "../components/IconButton";
+import PixelIcon from "../components/PixelIcon";
+import { colors, radius, space, type } from "../lib/theme";
+import { parseUpiLink } from "../lib/upi";
 
-const headlessNotificationListener = async ({ notification }) => {
-  // This notification object is delivered as a JSON string
-  if (notification) {
-    try {
-      const payload = JSON.parse(notification);
-      const text = payload.text || "";
+export default function ScannerScreen() {
+  const [permission, requestPermission] = useCameraPermissions();
+  const [facing, setFacing] = useState("back");
+  const [scanned, setScanned] = useState(false);
+  const [error, setError] = useState(null);
 
-      if (text.startsWith(":txt ")) {
-        const upiRegex = /(upi:\/\/pay\?[^\s]+)/i;
-        const match = text.match(upiRegex);
+  useFocusEffect(
+    useCallback(() => {
+      setScanned(false);
+      setError(null);
+    }, []),
+  );
 
-        if (match && match[0]) {
-          const upiLink = match[0];
-
-          // Safely initialize DB in the background
-          const db = SQLite.openDatabaseSync("payments.db");
-          db.execSync(`
-            CREATE TABLE IF NOT EXISTS received_payments (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              original_text TEXT,
-              upi_link TEXT,
-              received_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-          `);
-          
-          db.runSync(
-            "INSERT INTO received_payments (original_text, upi_link) VALUES (?, ?)",
-            [text, upiLink]
-          );
-
-          // Trigger local push notification
-          await Notifications.scheduleNotificationAsync({
-            content: {
-              title: "💳 Offline Payment Intercepted",
-              body: "Tap to review and settle the payment request.",
-              data: { url: upiLink },
-            },
-            trigger: null,
-          });
-        }
-      }
-    } catch (e) {
-      console.error("Background text handler crash:", e);
+  const handleScan = ({ data }) => {
+    setScanned(true);
+    const parsed = parseUpiLink(data);
+    if (!parsed.valid) {
+      setError(parsed.reason);
+      return;
     }
-  }
-};
 
-// Register background hook service directly with the OS using the required strict naming
-AppRegistry.registerHeadlessTask(
-  RNAndroidNotificationListenerHeadlessJsName,
-  () => headlessNotificationListener
-);
+    const link = parsed.raw.trim();
+    if (parsed.am != null) {
+      router.push({ pathname: "/recipients", params: { link } });
+    } else {
+      router.push({ pathname: "/pay/[url]", params: { url: link } });
+    }
+  };
+
+  const resetScanner = () => {
+    setError(null);
+    setScanned(false);
+  };
+
+  return (
+    <SafeAreaView style={styles.screen} edges={["bottom"]}>
+      <AppHeader
+        title="off-txt"
+        right={
+          <IconButton
+            icon="inbox"
+            label="Open payment requests"
+            onPress={() => router.push("/sms-payments")}
+          />
+        }
+      />
+
+      <View style={styles.body}>
+        {!permission ? (
+          <View style={styles.viewfinder} />
+        ) : !permission.granted ? (
+          <View style={styles.permission}>
+            <PixelIcon name="shield" size={24} color={colors.muted} />
+            <Text style={[type.body, styles.center]}>
+              Camera access is needed to read a UPI QR code.
+            </Text>
+            <AppButton label="Allow camera" onPress={requestPermission} />
+          </View>
+        ) : (
+          <View style={styles.viewfinder}>
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              facing={facing}
+              barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+              onBarcodeScanned={scanned ? undefined : handleScan}
+            />
+            <View pointerEvents="none" style={styles.reticle} />
+            <View style={styles.cameraControls}>
+              <IconButton
+                icon="reload"
+                label="Switch camera"
+                onPress={() =>
+                  setFacing((current) => (current === "back" ? "front" : "back"))
+                }
+                style={styles.cameraButton}
+              />
+            </View>
+          </View>
+        )}
+
+        {error ? (
+          <View style={styles.banner}>
+            <PixelIcon name="shield" size={16} color={colors.danger} />
+            <Text style={[type.muted, styles.bannerText]}>{error}</Text>
+            <IconButton
+              icon="close"
+              size={16}
+              label="Dismiss"
+              onPress={resetScanner}
+            />
+          </View>
+        ) : null}
+
+        <Text style={[type.muted, styles.hint]}>
+          Point the camera at a UPI QR code. The amount you type is carried in
+          the request link.
+        </Text>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  body: {
+    flex: 1,
+    padding: space.lg,
+    gap: space.md,
+  },
+  viewfinder: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: radius,
+    overflow: "hidden",
+    backgroundColor: colors.panel,
+  },
+  reticle: {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    width: 220,
+    height: 220,
+    marginTop: -110,
+    marginLeft: -110,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  cameraControls: {
+    position: "absolute",
+    bottom: space.lg,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+  },
+  cameraButton: {
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  permission: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: space.lg,
+    padding: space.xl,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: radius,
+    backgroundColor: colors.panel,
+  },
+  center: {
+    textAlign: "center",
+  },
+  banner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    paddingLeft: space.md,
+    borderWidth: 1,
+    borderColor: colors.danger,
+    borderRadius: radius,
+  },
+  bannerText: {
+    flex: 1,
+    paddingVertical: space.sm,
+  },
+  hint: {
+    paddingBottom: space.sm,
+  },
+});

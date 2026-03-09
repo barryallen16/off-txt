@@ -9,12 +9,12 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/off-txt-logo-dark.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/off-txt-logo-dark.png",
       "resizeMode": "contain",
-      "backgroundColor": "#000000"
+      "backgroundColor": "#0b0c10"
     },
     "ios": {
       "supportsTablet": true
@@ -22,14 +22,17 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/off-txt-logo-dark.png",
-        "backgroundColor": "#000000"
+        "backgroundColor": "#0b0c10"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.barryallen16.offtxt",
       "permissions": [
         "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
         "android.permission.READ_CONTACTS",
+        "android.permission.POST_NOTIFICATIONS"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
         "android.permission.WRITE_CONTACTS"
       ]
     },
@@ -37,15 +40,6 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      [
-        "expo-font",
-        {
-          "fonts": [
-            "./assets/fonts/BebasNeue-Regular.ttf",
-            "./assets/fonts/UbuntuMono-Regular.ttf"
-          ]
-        }
-      ],
       [
         "expo-camera",
         {
@@ -61,7 +55,10 @@
       ],
       "expo-router",
       "expo-sqlite",
-      "expo-build-properties"
+      "expo-build-properties",
+      "expo-notifications",
+      "./withAndroidAllowBackup",
+      "expo-font"
     ],
     "extra": {
       "router": {},
