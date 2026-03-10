@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Stack, router } from "expo-router";
+import { Stack, router, useRootNavigationState } from "expo-router";
 import { useFonts } from "expo-font";
 import * as Notifications from "expo-notifications";
 import * as SplashScreen from "expo-splash-screen";
@@ -19,6 +19,7 @@ Notifications.setNotificationHandler({
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts(fontFiles);
+  const navigationState = useRootNavigationState();
   const handledResponse = useRef(null);
 
   useEffect(() => {
@@ -29,6 +30,8 @@ export default function RootLayout() {
 
   // A tap always opens the inbox. It never starts a UPI app on its own.
   useEffect(() => {
+    if (!navigationState?.key) return;
+
     const openInbox = (response) => {
       const id = response?.notification?.request?.identifier ?? "latest";
       if (handledResponse.current === id) return;
@@ -48,7 +51,7 @@ export default function RootLayout() {
       .catch(() => {});
 
     return () => subscription.remove();
-  }, []);
+  }, [navigationState?.key]);
 
   if (!fontsLoaded && !fontError) return null;
 
