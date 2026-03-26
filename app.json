@@ -29,7 +29,9 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_CONTACTS",
-        "android.permission.POST_NOTIFICATIONS"
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.SEND_SMS",
+        "android.permission.READ_SMS"
       ],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",
@@ -51,6 +53,18 @@
         "expo-contacts",
         {
           "contactsPermission": "Allow $(PRODUCT_NAME) to access your contacts."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to read your location so you can text it to a contact."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to pick a photo to send."
         }
       ],
       "expo-router",

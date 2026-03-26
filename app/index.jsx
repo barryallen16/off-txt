@@ -49,11 +49,18 @@ export default function ScannerScreen() {
       <AppHeader
         title="off-txt"
         right={
-          <IconButton
-            icon="inbox"
-            label="Open payment requests"
-            onPress={() => router.push("/sms-payments")}
-          />
+          <View style={styles.headerActions}>
+            <IconButton
+              icon="send"
+              label="Send something"
+              onPress={() => router.push("/share")}
+            />
+            <IconButton
+              icon="inbox"
+              label="Open shared items"
+              onPress={() => router.push("/transfers")}
+            />
+          </View>
         }
       />
 
@@ -116,6 +123,11 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.bg,
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.xs,
   },
   body: {
     flex: 1,
