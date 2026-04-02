@@ -39,3 +39,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# bun binary lockfile (replaced by bun.lock)
+/bun.lockb
