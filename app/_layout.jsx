@@ -6,6 +6,7 @@ import * as Notifications from "expo-notifications";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { colors, fontFiles } from "../lib/theme";
+import { getMeta } from "../lib/db";
 import { syncInbox } from "../lib/syncInbox";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -23,6 +24,7 @@ export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts(fontFiles);
   const navigationState = useRootNavigationState();
   const handledResponse = useRef(null);
+  const checkedOnboarding = useRef(false);
 
   useEffect(() => {
     if (fontsLoaded || fontError) {
@@ -30,11 +32,35 @@ export default function RootLayout() {
     }
   }, [fontsLoaded, fontError]);
 
+  // Ask for the permissions the app cannot work without on the very first
+  // launch, instead of letting the user discover them screen by screen.
+  useEffect(() => {
+    if (!navigationState?.key) return;
+    if (!fontsLoaded && !fontError) return;
+    if (checkedOnboarding.current) return;
+    checkedOnboarding.current = true;
+
+    try {
+      if (getMeta("onboarding_complete") !== "1") {
+        router.replace("/permissions");
+      }
+    } catch {
+      // If the flag cannot be read, do not block the app.
+    }
+  }, [navigationState?.key, fontsLoaded, fontError]);
+
   // A tap always opens the inbox. It never starts a UPI app on its own.
   useEffect(() => {
     if (!navigationState?.key) return;
 
     const openInbox = (response) => {
+      // Do not let a stale notification skip the first-run setup.
+      try {
+        if (getMeta("onboarding_complete") !== "1") return;
+      } catch {
+        return;
+      }
+
       const id = response?.notification?.request?.identifier ?? "latest";
       if (handledResponse.current === id) return;
       handledResponse.current = id;

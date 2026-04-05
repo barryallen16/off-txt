@@ -1,27 +1,79 @@
-import { useCallback, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import {
+  AppState,
+  Linking,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { router, useFocusEffect } from "expo-router";
 import AppButton from "../components/AppButton";
 import AppHeader from "../components/AppHeader";
 import IconButton from "../components/IconButton";
+import Loading from "../components/Loading";
 import PixelIcon from "../components/PixelIcon";
 import { colors, radius, space, type } from "../lib/theme";
+import { getPermissionSnapshot, needsSetup } from "../lib/permissions";
 import { parseUpiLink } from "../lib/upi";
 
 export default function ScannerScreen() {
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [facing, setFacing] = useState("back");
   const [scanned, setScanned] = useState(false);
   const [error, setError] = useState(null);
+  const [askingCamera, setAskingCamera] = useState(false);
+  const [setup, setSetup] = useState(null);
 
   useFocusEffect(
     useCallback(() => {
       setScanned(false);
       setError(null);
+
+      let active = true;
+      getPermissionSnapshot()
+        .then((snapshot) => {
+          if (active) setSetup(snapshot);
+        })
+        .catch(() => {});
+
+      return () => {
+        active = false;
+      };
     }, []),
   );
+
+  // Notification-listener and camera access are granted in system settings;
+  // refresh when the app comes back so the banner and camera panel agree.
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (next) => {
+      if (next === "active") {
+        getPermission().catch(() => {});
+        getPermissionSnapshot()
+          .then((snapshot) => setSetup(snapshot))
+          .catch(() => {});
+      }
+    });
+    return () => subscription.remove();
+  }, [getPermission]);
+
+  const askCamera = async () => {
+    setAskingCamera(true);
+    try {
+      if (permission?.canAskAgain === false) {
+        await Linking.openSettings();
+      } else {
+        await requestPermission();
+      }
+      setSetup(await getPermissionSnapshot());
+    } catch {
+      // The settings screen can fail to open; the button stays available.
+    } finally {
+      setAskingCamera(false);
+    }
+  };
 
   const handleScan = ({ data }) => {
     setScanned(true);
@@ -44,12 +96,19 @@ export default function ScannerScreen() {
     setScanned(false);
   };
 
+  const setupNeeded = needsSetup(setup);
+
   return (
     <SafeAreaView style={styles.screen} edges={["bottom"]}>
       <AppHeader
         title="off-txt"
         right={
           <View style={styles.headerActions}>
+            <IconButton
+              icon="shield"
+              label="Permissions"
+              onPress={() => router.push("/permissions")}
+            />
             <IconButton
               icon="send"
               label="Send something"
@@ -64,16 +123,48 @@ export default function ScannerScreen() {
         }
       />
 
+      {setupNeeded ? (
+        <Pressable
+          onPress={() => router.push("/permissions")}
+          accessibilityRole="button"
+          accessibilityLabel="Finish permission setup"
+          style={({ pressed }) => [
+            styles.setupBanner,
+            pressed && styles.setupBannerPressed,
+          ]}
+        >
+          <PixelIcon name="shield" size={16} color={colors.muted} />
+          <View style={styles.setupText}>
+            <Text style={type.bodyMedium}>Finish setup</Text>
+            <Text style={type.muted} numberOfLines={2}>
+              Message and notification access are still off, so incoming items
+              will not show up on their own.
+            </Text>
+          </View>
+          <Text style={type.label}>FIX</Text>
+        </Pressable>
+      ) : null}
+
       <View style={styles.body}>
         {!permission ? (
-          <View style={styles.viewfinder} />
+          <View style={styles.viewfinder}>
+            <Loading label="Checking camera" style={styles.fill} />
+          </View>
         ) : !permission.granted ? (
           <View style={styles.permission}>
             <PixelIcon name="shield" size={24} color={colors.muted} />
             <Text style={[type.body, styles.center]}>
               Camera access is needed to read a UPI QR code.
             </Text>
-            <AppButton label="Allow camera" onPress={requestPermission} />
+            <AppButton
+              label={
+                permission.canAskAgain === false
+                  ? "Open settings"
+                  : "Allow camera"
+              }
+              loading={askingCamera}
+              onPress={askCamera}
+            />
           </View>
         ) : (
           <View style={styles.viewfinder}>
@@ -127,12 +218,34 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: space.xs,
+    gap: 2,
+  },
+  setupBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginTop: space.md,
+    padding: space.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: radius,
+    backgroundColor: colors.panel,
+  },
+  setupBannerPressed: {
+    backgroundColor: colors.line,
+  },
+  setupText: {
+    flex: 1,
+    gap: 2,
   },
   body: {
     flex: 1,
     padding: space.lg,
     gap: space.md,
+  },
+  fill: {
+    flex: 1,
   },
   viewfinder: {
     flex: 1,

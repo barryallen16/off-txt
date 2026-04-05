@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import PixelIcon from "./PixelIcon";
 import { colors, controlHeight, radius, space, type } from "../lib/theme";
 
@@ -29,27 +29,33 @@ export default function AppButton({
   variant = "primary",
   icon,
   disabled = false,
+  loading = false,
   style,
 }) {
   const look = VARIANTS[variant] ?? VARIANTS.primary;
+  const blocked = disabled || loading;
 
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
+      accessibilityState={{ disabled: blocked, busy: loading }}
+      disabled={blocked}
       onPress={onPress}
       style={({ pressed }) => [
         styles.base,
         look.container,
         pressed && look.pressed,
-        disabled && styles.disabled,
+        blocked && styles.disabled,
         style,
       ]}
     >
       <View style={styles.content}>
-        {icon ? <PixelIcon name={icon} size={16} color={look.icon} /> : null}
+        {loading ? (
+          <ActivityIndicator size="small" color={look.icon} />
+        ) : icon ? (
+          <PixelIcon name={icon} size={16} color={look.icon} />
+        ) : null}
         <Text style={[type.button, look.text]} numberOfLines={1}>
           {label}
         </Text>
