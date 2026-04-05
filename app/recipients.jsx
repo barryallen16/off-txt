@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  FlatList,
+  AppState,
   KeyboardAvoidingView,
   Linking,
   Platform,
   Pressable,
+  SectionList,
   StyleSheet,
   Text,
   TextInput,
@@ -17,7 +18,9 @@ import { router, useLocalSearchParams } from "expo-router";
 import AppButton from "../components/AppButton";
 import AppHeader from "../components/AppHeader";
 import IconButton from "../components/IconButton";
+import Loading from "../components/Loading";
 import PixelIcon from "../components/PixelIcon";
+import { listFavorites, toggleFavorite } from "../lib/db";
 import { colors, radius, space, type } from "../lib/theme";
 import { buildRequestText, parseUpiLink } from "../lib/upi";
 
@@ -33,28 +36,39 @@ export default function RecipientsScreen() {
   const requestLink = typeof link === "string" ? link : "";
   const parsed = useMemo(() => parseUpiLink(requestLink), [requestLink]);
 
-  const [permission, setPermission] = useState("loading");
+  const [contactsState, setContactsState] = useState("loading");
+  const [canAskContacts, setCanAskContacts] = useState(true);
+  const [retrying, setRetrying] = useState(false);
   const [contacts, setContacts] = useState([]);
+  const [favorites, setFavorites] = useState(new Set());
   const [query, setQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState(null);
 
-  useEffect(() => {
-    let active = true;
+  const loadContacts = useCallback(async (ask) => {
+    setContactsState("loading");
 
-    (async () => {
-      const { status: contactStatus } = await Contacts.requestPermissionsAsync();
-      if (!active) return;
+    try {
+      const permission = await Contacts.getPermissionsAsync();
+      let contactStatus = permission.status;
+      let canAskAgain = permission.canAskAgain !== false;
+
+      if (contactStatus !== "granted" && ask && canAskAgain) {
+        const asked = await Contacts.requestPermissionsAsync();
+        contactStatus = asked.status;
+        canAskAgain = asked.canAskAgain !== false;
+      }
+
+      setCanAskContacts(canAskAgain);
       if (contactStatus !== "granted") {
-        setPermission("denied");
+        setContactsState("denied");
         return;
       }
 
       const { data } = await Contacts.getContactsAsync({
         fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers],
       });
-      if (!active) return;
 
       const usable = data
         .map((contact) => ({
@@ -70,25 +84,68 @@ export default function RecipientsScreen() {
         );
 
       setContacts(usable);
-      setPermission("granted");
-    })().catch(() => {
-      if (active) setPermission("denied");
-    });
-
-    return () => {
-      active = false;
-    };
+      setFavorites(
+        new Set(listFavorites().map((favorite) => favorite.number)),
+      );
+      setContactsState("granted");
+    } catch {
+      setContactsState("denied");
+    }
   }, []);
 
-  const visibleContacts = useMemo(() => {
+  useEffect(() => {
+    loadContacts(true);
+  }, [loadContacts]);
+
+  // Returning from system settings should reveal the contacts without a
+  // manual refresh.
+  useEffect(() => {
+    if (contactsState !== "denied") return undefined;
+    const subscription = AppState.addEventListener("change", (next) => {
+      if (next === "active") loadContacts(false);
+    });
+    return () => subscription.remove();
+  }, [contactsState, loadContacts]);
+
+  const retry = async () => {
+    setRetrying(true);
+    try {
+      if (canAskContacts) await loadContacts(true);
+      else await Linking.openSettings();
+    } catch {
+      // The settings screen can fail to open; the button stays available.
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const sections = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return contacts;
-    return contacts.filter(
+    const matching = contacts.filter(
       (contact) =>
+        !needle ||
         contact.name.toLowerCase().includes(needle) ||
         contact.number.includes(needle),
     );
-  }, [contacts, query]);
+
+    matching.sort((a, b) => a.name.localeCompare(b.name));
+
+    const favoriteRows = matching.filter((contact) =>
+      favorites.has(contact.number),
+    );
+    const otherRows = matching.filter(
+      (contact) => !favorites.has(contact.number),
+    );
+
+    const result = [];
+    if (favoriteRows.length > 0) {
+      result.push({ title: "FAVORITES", data: favoriteRows });
+    }
+    if (otherRows.length > 0) {
+      result.push({ title: "ALL CONTACTS", data: otherRows });
+    }
+    return result;
+  }, [contacts, favorites, query]);
 
   const selectedContacts = useMemo(
     () => contacts.filter((contact) => selectedIds.includes(contact.id)),
@@ -102,6 +159,16 @@ export default function RecipientsScreen() {
         ? current.filter((item) => item !== id)
         : [...current, id],
     );
+  };
+
+  const toggleFavoriteContact = (contact) => {
+    const nowFavorite = toggleFavorite(contact);
+    setFavorites((current) => {
+      const next = new Set(current);
+      if (nowFavorite) next.add(contact.number);
+      else next.delete(contact.number);
+      return next;
+    });
   };
 
   const goBack = () => {
@@ -165,7 +232,9 @@ export default function RecipientsScreen() {
           <PixelIcon name="check" size={24} color={colors.text} />
           <Text style={[type.heading, styles.centerText]}>Request sent</Text>
           <Text style={[type.muted, styles.centerText]}>
-            Pay Rs {parsed.am} to {parsed.pn || parsed.pa}
+            {parsed.am
+              ? `Pay Rs ${parsed.am} to ${parsed.pn || parsed.pa}`
+              : `Pay ${parsed.pn || parsed.pa}`}
           </Text>
           <AppButton label="Done" onPress={() => router.navigate("/")} />
         </View>
@@ -193,23 +262,22 @@ export default function RecipientsScreen() {
             {parsed.pn || parsed.pa}
           </Text>
           <Text style={type.muted}>
-            Pay Rs {parsed.am} · {parsed.pa}
+            {parsed.am ? `Pay Rs ${parsed.am} · ${parsed.pa}` : parsed.pa}
           </Text>
         </View>
 
-        {permission === "loading" ? (
-          <View style={styles.empty}>
-            <Text style={type.muted}>Loading contacts...</Text>
-          </View>
-        ) : permission === "denied" ? (
+        {contactsState === "loading" ? (
+          <Loading label="Loading contacts" style={styles.fill} />
+        ) : contactsState === "denied" ? (
           <View style={styles.empty}>
             <PixelIcon name="user" size={24} color={colors.muted} />
             <Text style={[type.body, styles.centerText]}>
               Contact access is needed to pick who receives the request.
             </Text>
             <AppButton
-              label="Open settings"
-              onPress={() => Linking.openSettings()}
+              label={canAskContacts ? "Try again" : "Open settings"}
+              loading={retrying}
+              onPress={retry}
             />
           </View>
         ) : (
@@ -235,43 +303,77 @@ export default function RecipientsScreen() {
               ) : null}
             </View>
 
-            <FlatList
-              data={visibleContacts}
+            <SectionList
+              sections={sections}
               keyExtractor={(item) => item.id}
               initialNumToRender={20}
               keyboardShouldPersistTaps="handled"
+              stickySectionHeadersEnabled={false}
               contentContainerStyle={styles.list}
+              renderSectionHeader={({ section }) => (
+                <Text style={[type.label, styles.sectionHeader]}>
+                  {section.title}
+                </Text>
+              )}
               renderItem={({ item }) => {
                 const selected = selectedIds.includes(item.id);
+                const favorite = favorites.has(item.number);
                 return (
-                  <Pressable
-                    accessibilityRole="checkbox"
-                    accessibilityState={{ checked: selected }}
-                    accessibilityLabel={`${item.name}, ${item.number}`}
-                    onPress={() => toggleContact(item.id)}
-                    style={({ pressed }) => [
-                      styles.row,
-                      pressed && styles.rowPressed,
-                    ]}
+                  <View
+                    style={[styles.row, selected && styles.rowSelected]}
                   >
-                    <View style={styles.rowText}>
-                      <Text style={type.body} numberOfLines={1}>
-                        {item.name}
-                      </Text>
-                      <Text style={type.muted} numberOfLines={1}>
-                        {item.number}
-                      </Text>
-                    </View>
-                    <View style={styles.checkTarget}>
-                      <View
-                        style={[styles.checkbox, selected && styles.checkboxOn]}
-                      >
-                        {selected ? (
-                          <PixelIcon name="check" size={16} color={colors.bg} />
-                        ) : null}
+                    <Pressable
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: selected }}
+                      accessibilityLabel={`${item.name}, ${item.number}`}
+                      onPress={() => toggleContact(item.id)}
+                      style={({ pressed }) => [
+                        styles.rowMain,
+                        pressed && styles.rowPressed,
+                      ]}
+                    >
+                      <View style={styles.rowText}>
+                        <Text style={type.body} numberOfLines={1}>
+                          {item.name}
+                        </Text>
+                        <Text style={type.muted} numberOfLines={1}>
+                          {item.number}
+                        </Text>
                       </View>
-                    </View>
-                  </Pressable>
+                      <View style={styles.checkTarget}>
+                        <View
+                          style={[
+                            styles.checkbox,
+                            selected && styles.checkboxOn,
+                          ]}
+                        >
+                          {selected ? (
+                            <PixelIcon name="check" size={16} color={colors.bg} />
+                          ) : null}
+                        </View>
+                      </View>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => toggleFavoriteContact(item)}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        favorite
+                          ? `Remove ${item.name} from favorites`
+                          : `Add ${item.name} to favorites`
+                      }
+                      hitSlop={8}
+                      style={({ pressed }) => [
+                        styles.star,
+                        pressed && styles.starPressed,
+                      ]}
+                    >
+                      <PixelIcon
+                        name="star"
+                        size={20}
+                        color={favorite ? colors.accent : colors.muted}
+                      />
+                    </Pressable>
+                  </View>
                 );
               }}
               ListEmptyComponent={
@@ -308,13 +410,16 @@ export default function RecipientsScreen() {
         <View style={styles.footer}>
           <AppButton
             label={
-              selectedIds.length > 0
-                ? `Send to ${selectedIds.length}`
-                : "Send request"
+              sending
+                ? "Sending"
+                : selectedIds.length > 0
+                  ? `Send to ${selectedIds.length}`
+                  : "Send request"
             }
             icon="send"
+            loading={sending}
             onPress={sendRequests}
-            disabled={selectedIds.length === 0 || sending}
+            disabled={selectedIds.length === 0}
           />
         </View>
       </KeyboardAvoidingView>
@@ -326,6 +431,9 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.bg,
+  },
+  fill: {
+    flex: 1,
   },
   summary: {
     gap: space.xs,
@@ -353,16 +461,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
     paddingBottom: space.lg,
   },
+  sectionHeader: {
+    paddingTop: space.md,
+    paddingBottom: space.xs,
+  },
   row: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  rowSelected: {
+    backgroundColor: colors.panel,
+  },
+  rowMain: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     minHeight: 56,
     paddingVertical: space.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.line,
   },
   rowPressed: {
-    backgroundColor: colors.panel,
+    backgroundColor: colors.line,
   },
   rowText: {
     flex: 1,
@@ -386,6 +506,16 @@ const styles = StyleSheet.create({
   checkboxOn: {
     backgroundColor: colors.text,
     borderColor: colors.text,
+  },
+  star: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius,
+  },
+  starPressed: {
+    backgroundColor: colors.line,
   },
   footer: {
     padding: space.lg,

@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AppState,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -8,7 +10,10 @@ import {
   View,
 } from "react-native";
 import * as Contacts from "expo-contacts";
+import Loading from "./Loading";
 import PixelIcon from "./PixelIcon";
+import AppButton from "./AppButton";
+import { listFavorites, toggleFavorite } from "../lib/db";
 import { colors, radius, space, type } from "../lib/theme";
 
 export function cleanNumber(phoneNumbers) {
@@ -20,27 +25,48 @@ export function cleanNumber(phoneNumbers) {
 
 /**
  * Phone number field with a contact list underneath. Typing works without any
- * contact permission, the list only shows up when it is granted.
+ * contact permission, the list only shows up when it is granted. Favorite
+ * contacts are pinned to the top of the list.
  *
  * @param {{ selected: { number: string, name?: string | null } | null,
  *   onSelect: (value: { number: string, name?: string | null } | null) => void,
  *   disabled?: boolean }} props
  */
-export default function RecipientPicker({ selected, onSelect, disabled = false }) {
+export default function RecipientPicker({
+  selected,
+  onSelect,
+  disabled = false,
+}) {
   const [contacts, setContacts] = useState([]);
+  const [favorites, setFavorites] = useState(new Set());
   const [query, setQuery] = useState("");
+  const [state, setState] = useState("loading");
+  const [canAsk, setCanAsk] = useState(true);
+  const [asking, setAsking] = useState(false);
 
-  useEffect(() => {
-    let active = true;
+  const load = useCallback(async (ask) => {
+    setState("loading");
 
-    (async () => {
-      const { status } = await Contacts.requestPermissionsAsync();
-      if (!active || status !== "granted") return;
+    try {
+      const permission = await Contacts.getPermissionsAsync();
+      let status = permission.status;
+      let canAskAgain = permission.canAskAgain !== false;
+
+      if (status !== "granted" && ask && canAskAgain) {
+        const asked = await Contacts.requestPermissionsAsync();
+        status = asked.status;
+        canAskAgain = asked.canAskAgain !== false;
+      }
+
+      setCanAsk(canAskAgain);
+      if (status !== "granted") {
+        setState("denied");
+        return;
+      }
 
       const { data } = await Contacts.getContactsAsync({
         fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers],
       });
-      if (!active) return;
 
       setContacts(
         data
@@ -51,24 +77,120 @@ export default function RecipientPicker({ selected, onSelect, disabled = false }
           }))
           .filter((contact) => contact.name && contact.number),
       );
-    })().catch(() => {});
-
-    return () => {
-      active = false;
-    };
+      setFavorites(
+        new Set(listFavorites().map((favorite) => favorite.number)),
+      );
+      setState("granted");
+    } catch {
+      setState("denied");
+    }
   }, []);
 
-  const visible = useMemo(() => {
+  useEffect(() => {
+    load(true);
+  }, [load]);
+
+  useEffect(() => {
+    if (state !== "denied") return undefined;
+    const subscription = AppState.addEventListener("change", (next) => {
+      if (next === "active") load(false);
+    });
+    return () => subscription.remove();
+  }, [state, load]);
+
+  const groups = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const pool = needle
-      ? contacts.filter(
-          (contact) =>
-            contact.name.toLowerCase().includes(needle) ||
-            contact.number.includes(needle),
-        )
-      : contacts;
-    return pool.slice(0, 40);
-  }, [contacts, query]);
+    const matching = contacts.filter(
+      (contact) =>
+        !needle ||
+        contact.name.toLowerCase().includes(needle) ||
+        contact.number.includes(needle),
+    );
+
+    matching.sort((a, b) => a.name.localeCompare(b.name));
+
+    const favoriteRows = matching.filter((contact) =>
+      favorites.has(contact.number),
+    );
+    const otherRows = matching.filter(
+      (contact) => !favorites.has(contact.number),
+    );
+    return {
+      favorites: favoriteRows,
+      others: otherRows,
+    };
+  }, [contacts, favorites, query]);
+
+  const allow = async () => {
+    setAsking(true);
+    try {
+      if (canAsk) await load(true);
+      else await Linking.openSettings();
+    } catch {
+      // The settings screen can fail to open; the button stays available.
+    } finally {
+      setAsking(false);
+    }
+  };
+
+  const toggle = (contact) => {
+    const nowFavorite = toggleFavorite(contact);
+    setFavorites((current) => {
+      const next = new Set(current);
+      if (nowFavorite) next.add(contact.number);
+      else next.delete(contact.number);
+      return next;
+    });
+  };
+
+  const renderContact = (contact) => {
+    const active = selected?.number === contact.number;
+    const favorite = favorites.has(contact.number);
+
+    return (
+      <View
+        key={contact.id}
+        style={[styles.row, active && styles.rowActive]}
+      >
+        <Pressable
+          onPress={() =>
+            onSelect({ number: contact.number, name: contact.name })
+          }
+          accessibilityRole="button"
+          accessibilityLabel={`Send to ${contact.name}`}
+          style={({ pressed }) => [
+            styles.rowMain,
+            pressed && styles.rowPressed,
+          ]}
+        >
+          <Text style={type.bodyMedium} numberOfLines={1}>
+            {contact.name}
+          </Text>
+          <Text style={type.muted}>{contact.number}</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => toggle(contact)}
+          accessibilityRole="button"
+          accessibilityLabel={
+            favorite
+              ? `Remove ${contact.name} from favorites`
+              : `Add ${contact.name} to favorites`
+          }
+          hitSlop={8}
+          style={({ pressed }) => [
+            styles.star,
+            pressed && styles.starPressed,
+          ]}
+        >
+          <PixelIcon
+            name="star"
+            size={20}
+            color={favorite ? colors.accent : colors.muted}
+          />
+        </Pressable>
+      </View>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -96,50 +218,66 @@ export default function RecipientPicker({ selected, onSelect, disabled = false }
         </Text>
       ) : null}
 
-      {contacts.length > 0 && !disabled ? (
-        <>
-          <View style={styles.searchRow}>
-            <PixelIcon name="search" size={16} color={colors.muted} />
-            <TextInput
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Search contacts"
-              placeholderTextColor={colors.muted}
-              style={[type.muted, styles.search]}
-              accessibilityLabel="Search contacts"
-            />
-          </View>
+      {state === "loading" ? (
+        <Loading compact label="Loading contacts" />
+      ) : state === "denied" ? (
+        <View style={styles.permissionRow}>
+          <Text style={[type.muted, styles.permissionText]}>
+            Contacts are off. Type a number above, or allow access to pick from
+            the list.
+          </Text>
+          <AppButton
+            label={canAsk ? "Allow" : "Settings"}
+            variant="outline"
+            loading={asking}
+            onPress={allow}
+            style={styles.permissionButton}
+          />
+        </View>
+      ) : contacts.length === 0 ? (
+        <Text style={[type.muted, styles.empty]}>
+          No contacts with a phone number.
+        </Text>
+      ) : (
+        !disabled && (
+          <>
+            <View style={styles.searchRow}>
+              <PixelIcon name="search" size={16} color={colors.muted} />
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search contacts"
+                placeholderTextColor={colors.muted}
+                style={[type.muted, styles.search]}
+                accessibilityLabel="Search contacts"
+              />
+            </View>
 
-          <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
-            {visible.map((contact) => {
-              const active = selected?.number === contact.number;
-              return (
-                <Pressable
-                  key={contact.id}
-                  onPress={() =>
-                    onSelect({ number: contact.number, name: contact.name })
-                  }
-                  accessibilityRole="button"
-                  accessibilityLabel={`Send to ${contact.name}`}
-                  style={({ pressed }) => [
-                    styles.row,
-                    active && styles.rowActive,
-                    pressed && styles.rowPressed,
-                  ]}
-                >
-                  <Text style={type.bodyMedium} numberOfLines={1}>
-                    {contact.name}
-                  </Text>
-                  <Text style={type.muted}>{contact.number}</Text>
-                </Pressable>
-              );
-            })}
-            {visible.length === 0 ? (
-              <Text style={[type.muted, styles.empty]}>No contact matches.</Text>
-            ) : null}
-          </ScrollView>
-        </>
-      ) : null}
+            <ScrollView
+              style={styles.list}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+            >
+              {groups.favorites.length > 0 ? (
+                <Text style={[type.label, styles.groupLabel]}>FAVORITES</Text>
+              ) : null}
+              {groups.favorites.map(renderContact)}
+
+              {groups.others.length > 0 ? (
+                <Text style={[type.label, styles.groupLabel]}>CONTACTS</Text>
+              ) : null}
+              {groups.others.map(renderContact)}
+
+              {groups.favorites.length === 0 &&
+              groups.others.length === 0 ? (
+                <Text style={[type.muted, styles.empty]}>
+                  No contact matches.
+                </Text>
+              ) : null}
+            </ScrollView>
+          </>
+        )
+      )}
     </View>
   );
 }
@@ -175,12 +313,21 @@ const styles = StyleSheet.create({
     paddingVertical: space.xs,
   },
   list: {
-    maxHeight: 190,
+    maxHeight: 240,
+  },
+  groupLabel: {
+    paddingTop: space.sm,
+    paddingBottom: 2,
   },
   row: {
-    paddingVertical: space.sm,
+    flexDirection: "row",
+    alignItems: "center",
     borderBottomWidth: 1,
     borderBottomColor: colors.line,
+  },
+  rowMain: {
+    flex: 1,
+    paddingVertical: space.sm,
     gap: 2,
   },
   rowActive: {
@@ -188,6 +335,29 @@ const styles = StyleSheet.create({
   },
   rowPressed: {
     backgroundColor: colors.line,
+  },
+  star: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius,
+  },
+  starPressed: {
+    backgroundColor: colors.line,
+  },
+  permissionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.md,
+    paddingVertical: space.sm,
+  },
+  permissionText: {
+    flex: 1,
+  },
+  permissionButton: {
+    minHeight: 40,
+    paddingHorizontal: space.md,
   },
   empty: {
     paddingVertical: space.md,
