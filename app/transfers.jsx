@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   Image,
   Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
   View,
@@ -12,6 +14,7 @@ import { router, useFocusEffect } from "expo-router";
 import AppButton from "../components/AppButton";
 import AppHeader from "../components/AppHeader";
 import IconButton from "../components/IconButton";
+import Loading from "../components/Loading";
 import PixelIcon from "../components/PixelIcon";
 import { listTransfers } from "../lib/db";
 import { buildTrail, formatAge } from "../lib/geo";
@@ -69,17 +72,27 @@ function groupByDay(items) {
 
 export default function TransfersScreen() {
   const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(() => {
-    setItems(listTransfers());
-    syncInbox().then((count) => {
-      if (count > 0) setItems(listTransfers());
-    });
+  const load = useCallback(async (mode = "focus") => {
+    if (mode === "refresh") setRefreshing(true);
+
+    try {
+      setItems(listTransfers());
+      await syncInbox({ force: mode === "refresh" });
+      setItems(listTransfers());
+    } catch {
+      // The stored list is still worth showing.
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
   useFocusEffect(
     useCallback(() => {
-      load();
+      load("focus");
     }, [load]),
   );
 
@@ -96,15 +109,28 @@ export default function TransfersScreen() {
         title="Shared items"
         onBack={goBack}
         right={
-          <IconButton
-            icon="message-text"
-            label="Payment requests"
-            onPress={() => router.push("/sms-payments")}
-          />
+          refreshing ? (
+            <ActivityIndicator color={colors.muted} style={styles.headerSpinner} />
+          ) : (
+            <View style={styles.headerActions}>
+              <IconButton
+                icon="message-text"
+                label="Payment requests"
+                onPress={() => router.push("/sms-payments")}
+              />
+              <IconButton
+                icon="reload"
+                label="Refresh shared items"
+                onPress={() => load("refresh")}
+              />
+            </View>
+          )
         }
       />
 
-      {items.length === 0 ? (
+      {loading && items.length === 0 ? (
+        <Loading label="Checking for new items" style={styles.fill} />
+      ) : items.length === 0 ? (
         <View style={styles.empty}>
           <PixelIcon name="inbox" size={24} color={colors.muted} />
           <Text style={[type.body, styles.center]}>Nothing received yet.</Text>
@@ -118,6 +144,14 @@ export default function TransfersScreen() {
           data={sections}
           keyExtractor={(section) => section.label}
           contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => load("refresh")}
+              tintColor={colors.muted}
+              colors={[colors.accent]}
+            />
+          }
           renderItem={({ item: section }) => (
             <View style={styles.section}>
               <Text style={type.label}>{section.label.toUpperCase()}</Text>
@@ -210,6 +244,20 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.bg,
+  },
+  fill: {
+    flex: 1,
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  headerSpinner: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
   },
   list: {
     padding: space.lg,

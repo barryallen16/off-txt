@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import AppButton from "../../components/AppButton";
@@ -25,11 +31,14 @@ export default function LocationShareScreen() {
   const [sentCount, setSentCount] = useState(0);
   const [last, setLast] = useState(null);
   const [pending, setPending] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState(null);
 
   const timer = useRef(null);
   const recipientRef = useRef(null);
   const intervalRef = useRef(60);
+  const runningRef = useRef(false);
+  const runId = useRef(0);
   const sessionRef = useRef(newSessionId());
 
   recipientRef.current = recipient;
@@ -66,6 +75,8 @@ export default function LocationShareScreen() {
   }, []);
 
   const stop = useCallback(() => {
+    runId.current += 1;
+    runningRef.current = false;
     if (timer.current) {
       clearInterval(timer.current);
       timer.current = null;
@@ -76,27 +87,39 @@ export default function LocationShareScreen() {
   useEffect(() => stop, [stop]);
 
   const start = async () => {
-    if (!recipient?.number || running) return;
+    if (!recipient?.number || running || runningRef.current || starting) return;
     setError(null);
+    setStarting(true);
+    const run = ++runId.current;
 
-    const access = await requestLocationAccess();
-    if (!access.granted) {
-      setError(access.reason);
-      return;
+    try {
+      const access = await requestLocationAccess();
+      if (runId.current !== run) return;
+      if (!access.granted) {
+        setError(access.reason);
+        return;
+      }
+
+      const allowed = hasSendPermission() || (await requestSmsPermissions());
+      if (runId.current !== run) return;
+      if (!allowed) {
+        setError("SMS permission is needed to send location updates.");
+        return;
+      }
+
+      sessionRef.current = newSessionId();
+      setSentCount(0);
+      runningRef.current = true;
+      setRunning(true);
+
+      await sendFix();
+      if (!runningRef.current || runId.current !== run) return;
+      timer.current = setInterval(sendFix, intervalRef.current * 1000);
+    } catch (failure) {
+      setError(failure?.message ?? "Could not start sharing.");
+    } finally {
+      setStarting(false);
     }
-
-    const allowed = hasSendPermission() || (await requestSmsPermissions());
-    if (!allowed) {
-      setError("SMS permission is needed to send location updates.");
-      return;
-    }
-
-    sessionRef.current = newSessionId();
-    setSentCount(0);
-    setRunning(true);
-
-    await sendFix();
-    timer.current = setInterval(sendFix, intervalRef.current * 1000);
   };
 
   const changeInterval = (seconds) => {
@@ -152,11 +175,15 @@ export default function LocationShareScreen() {
 
         <View style={styles.status}>
           <View style={styles.statusRow}>
-            <PixelIcon
-              name="location"
-              size={16}
-              color={running ? colors.text : colors.muted}
-            />
+            {pending ? (
+              <ActivityIndicator size="small" color={colors.muted} />
+            ) : (
+              <PixelIcon
+                name="location"
+                size={16}
+                color={running ? colors.text : colors.muted}
+              />
+            )}
             <Text style={type.bodyMedium}>
               {running
                 ? `Sharing every ${intervalRef.current} s`
@@ -193,7 +220,8 @@ export default function LocationShareScreen() {
           <AppButton
             label="Start sharing"
             onPress={start}
-            disabled={!recipient?.number || pending}
+            loading={starting}
+            disabled={!recipient?.number}
           />
         )}
       </View>

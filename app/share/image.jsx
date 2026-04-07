@@ -163,13 +163,14 @@ export default function ImageShareScreen() {
           <AppButton
             label={working ? "Sending..." : `Send ${photo.parts} parts`}
             onPress={send}
-            disabled={working || !recipient?.number}
+            loading={working}
+            disabled={!recipient?.number}
           />
         ) : (
           <AppButton
             label={working ? "Compressing..." : "Choose photo"}
             onPress={pick}
-            disabled={working}
+            loading={working}
           />
         )}
       </View>

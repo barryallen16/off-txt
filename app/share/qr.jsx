@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
+  AppState,
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,6 +14,7 @@ import { router } from "expo-router";
 import QRCode from "react-native-qrcode-svg";
 import AppButton from "../../components/AppButton";
 import AppHeader from "../../components/AppHeader";
+import Loading from "../../components/Loading";
 import PixelIcon from "../../components/PixelIcon";
 import RecipientPicker from "../../components/RecipientPicker";
 import { classifyQr, normaliseQr, summariseQr } from "../../lib/qr";
@@ -20,15 +23,38 @@ import { KIND, encodeTransfer } from "../../lib/transfer";
 import { colors, radius, space, type } from "../../lib/theme";
 
 export default function QrShareScreen() {
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [mode, setMode] = useState("scan");
   const [text, setText] = useState("");
   const [recipient, setRecipient] = useState(null);
   const [sending, setSending] = useState(false);
+  const [askingCamera, setAskingCamera] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState(null);
 
   const check = normaliseQr(text);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (next) => {
+      if (next === "active") getPermission().catch(() => {});
+    });
+    return () => subscription.remove();
+  }, [getPermission]);
+
+  const askCamera = async () => {
+    setAskingCamera(true);
+    try {
+      if (permission?.canAskAgain === false) {
+        await Linking.openSettings();
+      } else {
+        await requestPermission();
+      }
+    } catch {
+      // Leave the button available if settings cannot open.
+    } finally {
+      setAskingCamera(false);
+    }
+  };
 
   const onScan = ({ data }) => {
     setText(data ?? "");
@@ -76,7 +102,13 @@ export default function QrShareScreen() {
   };
 
   const scanner = () => {
-    if (!permission) return <View style={styles.viewfinder} />;
+    if (!permission) {
+      return (
+        <View style={styles.viewfinder}>
+          <Loading label="Checking camera" style={styles.fill} />
+        </View>
+      );
+    }
     if (!permission.granted) {
       return (
         <View style={[styles.viewfinder, styles.centered]}>
@@ -84,7 +116,13 @@ export default function QrShareScreen() {
           <Text style={[type.muted, styles.center]}>
             Camera access is needed to read a QR code.
           </Text>
-          <AppButton label="Allow camera" onPress={requestPermission} />
+          <AppButton
+            label={
+              permission.canAskAgain === false ? "Open settings" : "Allow camera"
+            }
+            loading={askingCamera}
+            onPress={askCamera}
+          />
         </View>
       );
     }
@@ -119,6 +157,10 @@ export default function QrShareScreen() {
             <Text style={type.label}>{classifyQr(check.text).toUpperCase()}</Text>
             <Text style={[type.body, styles.break]}>{summariseQr(check.text)}</Text>
           </View>
+        ) : null}
+
+        {mode === "review" && text.length > 0 && !check.valid ? (
+          <Text style={[type.muted, styles.error]}>{check.reason}</Text>
         ) : null}
 
         {mode === "manual" ? (
@@ -192,7 +234,8 @@ export default function QrShareScreen() {
         <AppButton
           label={sending ? "Sending..." : "Send code"}
           onPress={send}
-          disabled={!check.valid || !recipient?.number || sending}
+          loading={sending}
+          disabled={!check.valid || !recipient?.number}
         />
       </View>
     </SafeAreaView>
@@ -215,6 +258,9 @@ const styles = StyleSheet.create({
     borderRadius: radius,
     overflow: "hidden",
     backgroundColor: colors.panel,
+  },
+  fill: {
+    flex: 1,
   },
   centered: {
     alignItems: "center",
