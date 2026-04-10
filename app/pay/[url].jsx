@@ -14,15 +14,23 @@ import AppButton from "../../components/AppButton";
 import AppHeader from "../../components/AppHeader";
 import PixelIcon from "../../components/PixelIcon";
 import { colors, radius, space, type } from "../../lib/theme";
-import { buildRequestLink, parseUpiLink, validateAmount } from "../../lib/upi";
+import {
+  buildRequestLink,
+  decodeLinkParam,
+  encodeLinkParam,
+  normalizeAmount,
+  parseUpiLink,
+  validateAmount,
+} from "../../lib/upi";
 
 export default function AmountScreen() {
   const { url } = useLocalSearchParams();
-  const link = typeof url === "string" ? url : "";
+  const link = decodeLinkParam(typeof url === "string" ? url : "");
   const parsed = useMemo(() => parseUpiLink(link), [link]);
   const [amount, setAmount] = useState("");
 
-  const hasAmountInLink = parsed.valid && parsed.am != null;
+  const linkAmount = normalizeAmount(parsed.am);
+  const hasAmountInLink = parsed.valid && linkAmount != null;
   const check = validateAmount(amount, parsed.mam);
   const willStripSignature = parsed.valid && parsed.signed && !hasAmountInLink;
 
@@ -32,9 +40,12 @@ export default function AmountScreen() {
   };
 
   const continueToRecipients = () => {
-    if (!check.valid) return;
+    if (!hasAmountInLink && !check.valid) return;
     const { link: requestLink } = buildRequestLink(link, check.amount);
-    router.push({ pathname: "/recipients", params: { link: requestLink } });
+    router.push({
+      pathname: "/recipients",
+      params: { link: encodeLinkParam(requestLink) },
+    });
   };
 
   if (!parsed.valid) {
@@ -76,7 +87,7 @@ export default function AmountScreen() {
             {hasAmountInLink ? (
               <View style={styles.readonlyRow}>
                 <Text style={styles.currency}>₹</Text>
-                <Text style={type.amount}>{parsed.am}</Text>
+                <Text style={type.amount}>{linkAmount}</Text>
               </View>
             ) : (
               <View style={styles.inputRow}>

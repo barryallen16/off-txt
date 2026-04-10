@@ -22,7 +22,12 @@ import Loading from "../components/Loading";
 import PixelIcon from "../components/PixelIcon";
 import { listFavorites, toggleFavorite } from "../lib/db";
 import { colors, radius, space, type } from "../lib/theme";
-import { buildRequestText, parseUpiLink } from "../lib/upi";
+import {
+  buildRequestLink,
+  buildRequestText,
+  decodeLinkParam,
+  parseUpiLink,
+} from "../lib/upi";
 
 function cleanNumber(phoneNumbers) {
   const entry = phoneNumbers?.find((item) => item.number);
@@ -33,8 +38,13 @@ function cleanNumber(phoneNumbers) {
 
 export default function RecipientsScreen() {
   const { link } = useLocalSearchParams();
-  const requestLink = typeof link === "string" ? link : "";
+  const requestLink = decodeLinkParam(typeof link === "string" ? link : "");
   const parsed = useMemo(() => parseUpiLink(requestLink), [requestLink]);
+  const payable = useMemo(
+    () => buildRequestLink(requestLink, parsed.am),
+    [requestLink, parsed.am],
+  );
+  const requestAmount = payable.amount;
 
   const [contactsState, setContactsState] = useState("loading");
   const [canAskContacts, setCanAskContacts] = useState(true);
@@ -182,7 +192,7 @@ export default function RecipientsScreen() {
     const numbers = [
       ...new Set(selectedContacts.map((contact) => contact.number)),
     ];
-    const message = buildRequestText(requestLink, parsed.am ?? "");
+    const message = buildRequestText(payable.link, requestAmount ?? "");
 
     setSending(true);
     setStatus(null);
@@ -232,8 +242,8 @@ export default function RecipientsScreen() {
           <PixelIcon name="check" size={24} color={colors.text} />
           <Text style={[type.heading, styles.centerText]}>Request sent</Text>
           <Text style={[type.muted, styles.centerText]}>
-            {parsed.am
-              ? `Pay Rs ${parsed.am} to ${parsed.pn || parsed.pa}`
+            {requestAmount
+              ? `Pay Rs ${requestAmount} to ${parsed.pn || parsed.pa}`
               : `Pay ${parsed.pn || parsed.pa}`}
           </Text>
           <AppButton label="Done" onPress={() => router.navigate("/")} />
@@ -262,7 +272,9 @@ export default function RecipientsScreen() {
             {parsed.pn || parsed.pa}
           </Text>
           <Text style={type.muted}>
-            {parsed.am ? `Pay Rs ${parsed.am} · ${parsed.pa}` : parsed.pa}
+            {requestAmount
+              ? `Pay Rs ${requestAmount} · ${parsed.pa}`
+              : parsed.pa}
           </Text>
         </View>
 

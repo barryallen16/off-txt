@@ -1,10 +1,13 @@
 # off-txt
 
-Send pictures, QR codes, and live location over SMS. Works offline — no data plan needed on either end.
+Send pictures, QR codes, and live location over SMS. Works offline - no data plan needed on either end.
 
 ## What it does
 
 - **Payments**: Scan a UPI QR code, enter an amount, and send the request via SMS. The recipient opens it in their UPI app.
+  Amounts are written into the link as a clean UPI intent (`pa`, `pn`, `am`, `cu`, plus `tr`/`tn` when present).
+  A signed link that already carries an amount is kept byte-for-byte so its signature stays valid.
+  Links that need an amount added follow the [NPCI UPI linking specification](https://www.labnol.org/files/linking.pdf) and are unsigned, so the payer's UPI app may ask them to verify the source.
 - **Images**: Pick a photo, compress it to grayscale posterized JPEG (~2 KB), and send as a series of SMS parts. The other side reassembles it.
 - **QR codes**: Scan or paste any QR code text. Send the text over SMS; the recipient rebuilds the same QR code (metro tickets, boarding passes, etc.).
 - **Location**: Share your live location for a set interval. Updates arrive as SMS on the other side.
@@ -68,7 +71,7 @@ modules/off-txt-sms/ # Native Android module (Kotlin)
 ## Testing
 
 ```bash
-bun test          # 47 tests across transfer + UPI parsing
+bun test          # transfer + UPI tests
 bun run typecheck # TypeScript strict mode
 ```
 

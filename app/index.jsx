@@ -17,7 +17,7 @@ import Loading from "../components/Loading";
 import PixelIcon from "../components/PixelIcon";
 import { colors, radius, space, type } from "../lib/theme";
 import { getPermissionSnapshot, needsSetup } from "../lib/permissions";
-import { parseUpiLink } from "../lib/upi";
+import { encodeLinkParam, normalizeAmount, parseUpiLink } from "../lib/upi";
 
 export default function ScannerScreen() {
   const [permission, requestPermission, getPermission] = useCameraPermissions();
@@ -84,10 +84,16 @@ export default function ScannerScreen() {
     }
 
     const link = parsed.raw.trim();
-    if (parsed.am != null) {
-      router.push({ pathname: "/recipients", params: { link } });
+    if (normalizeAmount(parsed.am) != null) {
+      router.push({
+        pathname: "/recipients",
+        params: { link: encodeLinkParam(link) },
+      });
     } else {
-      router.push({ pathname: "/pay/[url]", params: { url: link } });
+      router.push({
+        pathname: "/pay/[url]",
+        params: { url: encodeLinkParam(link) },
+      });
     }
   };
 

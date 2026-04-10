@@ -29,20 +29,19 @@ import {
 } from "../lib/db";
 import { syncInbox } from "../lib/syncInbox";
 import { dayLabel } from "../lib/time";
-import { parseUpiLink } from "../lib/upi";
+import { buildRequestLink, normalizeAmount, parseUpiLink } from "../lib/upi";
 
 function dayKey(date) {
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }
 
 function withLinkFallback(row) {
-  if (row.payee_vpa && row.payee_name && row.amount) return row;
   const parsed = parseUpiLink(row.upi_link || "");
   return {
     ...row,
     payee_name: row.payee_name || parsed.pn || null,
     payee_vpa: row.payee_vpa || parsed.pa || null,
-    amount: row.amount || parsed.am || null,
+    amount: normalizeAmount(row.amount) || normalizeAmount(parsed.am) || null,
   };
 }
 
@@ -167,7 +166,8 @@ export default function SmsPaymentsScreen() {
     setError(null);
     setPayingId(item.id);
     try {
-      await Linking.openURL(item.upi_link);
+      const { link } = buildRequestLink(item.upi_link, item.amount);
+      await Linking.openURL(link);
     } catch {
       setError("No UPI app could open this request.");
     } finally {
