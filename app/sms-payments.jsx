@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
+  DeviceEventEmitter,
   Linking,
   Platform,
   Pressable,
@@ -27,7 +28,7 @@ import {
   setRequestStatus,
   toDate,
 } from "../lib/db";
-import { syncInbox } from "../lib/syncInbox";
+import { syncInbox, INBOX_SYNCED_EVENT } from "../lib/syncInbox";
 import { dayLabel } from "../lib/time";
 import { buildRequestLink, normalizeAmount, parseUpiLink } from "../lib/upi";
 
@@ -109,6 +110,15 @@ export default function SmsPaymentsScreen() {
       checkNotificationAccess();
     }, [load, checkNotificationAccess]),
   );
+
+  // The background inbox poll can store a request while this screen is open.
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener(
+      INBOX_SYNCED_EVENT,
+      readStored,
+    );
+    return () => subscription.remove();
+  }, [readStored]);
 
   // Notification-listener access is granted in system settings. Re-check when
   // the user comes back to the app.
@@ -444,7 +454,7 @@ export default function SmsPaymentsScreen() {
               </Text>
               <Text style={[type.muted, styles.centerText]}>
                 {tab === "open"
-                  ? "A request arrives when an SMS notification contains a :txt UPI link."
+                  ? "A request arrives when an SMS contains a :txt UPI link. The app checks messages on this phone every few seconds."
                   : "Mark a request done or dismiss it, and it lands here."}
               </Text>
             </View>

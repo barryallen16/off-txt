@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  DeviceEventEmitter,
   FlatList,
   Image,
   Pressable,
@@ -20,7 +21,7 @@ import { listTransfers } from "../lib/db";
 import { buildTrail, formatAge } from "../lib/geo";
 import { decodeLocation } from "../lib/geo";
 import { summariseQr } from "../lib/qr";
-import { syncInbox } from "../lib/syncInbox";
+import { syncInbox, INBOX_SYNCED_EVENT } from "../lib/syncInbox";
 import { colors, radius, space, type } from "../lib/theme";
 import { dayLabel, formatClock } from "../lib/time";
 import { KIND } from "../lib/transfer";
@@ -95,6 +96,15 @@ export default function TransfersScreen() {
       load("focus");
     }, [load]),
   );
+
+  // The foreground inbox poll can store an item while this screen is open.
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener(
+      INBOX_SYNCED_EVENT,
+      () => setItems(listTransfers()),
+    );
+    return () => subscription.remove();
+  }, []);
 
   const sections = useMemo(() => groupByDay(items), [items]);
 

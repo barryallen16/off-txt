@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { Stack, router, useRootNavigationState } from "expo-router";
 import { useFonts } from "expo-font";
@@ -23,14 +23,61 @@ Notifications.setNotificationHandler({
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts(fontFiles);
   const navigationState = useRootNavigationState();
-  const handledResponse = useRef(null);
   const checkedOnboarding = useRef(false);
+  const [appActive, setAppActive] = useState(
+    AppState.currentState !== "background",
+  );
+  const ready =
+    Boolean(navigationState?.key) &&
+    appActive &&
+    (Boolean(fontsLoaded) || Boolean(fontError));
+  const readyRef = useRef(ready);
+  const pendingRoute = useRef(null);
+  const handledNotification = useRef(null);
+
+  const flushPendingRoute = useCallback(() => {
+    if (!readyRef.current) return;
+
+    const route = pendingRoute.current;
+    if (!route) return;
+
+    // Never let a stale notification skip the first-run setup.
+    try {
+      if (getMeta("onboarding_complete") !== "1") {
+        pendingRoute.current = null;
+        return;
+      }
+    } catch {
+      return;
+    }
+
+    pendingRoute.current = null;
+    Notifications.clearLastNotificationResponseAsync().catch(() => {});
+
+    // Wait for the current render and the focus change to settle. Pushing while
+    // the app is still coming to the foreground can drop the navigation.
+    setTimeout(() => {
+      router.navigate(route);
+    }, 60);
+  }, []);
+
+  useEffect(() => {
+    readyRef.current = ready;
+    if (ready) flushPendingRoute();
+  }, [ready, flushPendingRoute]);
 
   useEffect(() => {
     if (fontsLoaded || fontError) {
       SplashScreen.hideAsync().catch(() => {});
     }
   }, [fontsLoaded, fontError]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      setAppActive(state === "active");
+    });
+    return () => subscription.remove();
+  }, []);
 
   // Ask for the permissions the app cannot work without on the very first
   // launch, instead of letting the user discover them screen by screen.
@@ -50,52 +97,69 @@ export default function RootLayout() {
   }, [navigationState?.key, fontsLoaded, fontError]);
 
   // A tap always opens the inbox. It never starts a UPI app on its own.
+  // The route is queued until navigation and the app are both ready, because a
+  // response can arrive before the navigator mounts on a cold start.
   useEffect(() => {
-    if (!navigationState?.key) return;
-
-    const openInbox = (response) => {
-      // Do not let a stale notification skip the first-run setup.
-      try {
-        if (getMeta("onboarding_complete") !== "1") return;
-      } catch {
-        return;
-      }
-
-      const id = response?.notification?.request?.identifier ?? "latest";
-      if (handledResponse.current === id) return;
-      handledResponse.current = id;
-
+    const routeFor = (response) => {
       const transferId =
         response?.notification?.request?.content?.data?.transferId;
-      if (transferId != null) router.navigate(`/transfers/${transferId}`);
-      else router.navigate("/sms-payments");
+      return transferId != null ? `/transfers/${transferId}` : "/sms-payments";
+    };
+
+    const queue = (response) => {
+      if (!response) return;
+
+      const id = response?.notification?.request?.identifier ?? null;
+      if (id && handledNotification.current === id) return;
+      handledNotification.current = id;
+
+      pendingRoute.current = routeFor(response);
+      flushPendingRoute();
     };
 
     const subscription =
-      Notifications.addNotificationResponseReceivedListener(openInbox);
+      Notifications.addNotificationResponseReceivedListener(queue);
 
     Notifications.getLastNotificationResponseAsync()
       .then((response) => {
-        if (!response) return;
-        const delivered = Number(response.notification.date) * 1000;
-        if (Date.now() - delivered < 60_000) openInbox(response);
+        if (response) queue(response);
       })
       .catch(() => {});
 
     return () => subscription.remove();
-  }, [navigationState?.key]);
+  }, [flushPendingRoute]);
 
-  // The notification path can only see what Android puts in the notification.
-  // Reading the inbox fills in the rest of a multipart transfer.
+  // Notification access can be off, or a messaging app may post no
+  // notification at all. Poll the SMS inbox while the app is open so those
+  // requests still show up without a restart.
   useEffect(() => {
-    if (!navigationState?.key) return;
+    if (!navigationState?.key) return undefined;
 
-    syncInbox().catch(() => {});
+    let timer = null;
+    const tick = () => {
+      syncInbox().catch(() => {});
+    };
+    const start = () => {
+      tick();
+      if (timer) return;
+      timer = setInterval(tick, 10_000);
+    };
+    const stop = () => {
+      if (!timer) return;
+      clearInterval(timer);
+      timer = null;
+    };
+
+    start();
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") syncInbox().catch(() => {});
+      if (state === "active") start();
+      else stop();
     });
 
-    return () => subscription.remove();
+    return () => {
+      stop();
+      subscription.remove();
+    };
   }, [navigationState?.key]);
 
   if (!fontsLoaded && !fontError) return null;
