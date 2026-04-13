@@ -9,19 +9,14 @@ import {
   TextInput,
   View,
 } from "react-native";
-import * as Contacts from "expo-contacts";
 import Loading from "./Loading";
 import PixelIcon from "./PixelIcon";
 import AppButton from "./AppButton";
+import { contactsAccess, loadPhoneContacts } from "../lib/contacts";
 import { listFavorites, toggleFavorite } from "../lib/db";
 import { colors, radius, space, type } from "../lib/theme";
 
-export function cleanNumber(phoneNumbers) {
-  const entry = phoneNumbers?.find((item) => item.number);
-  if (!entry) return null;
-  const digits = String(entry.number).replace(/[^\d+]/g, "");
-  return digits.length >= 6 ? digits : null;
-}
+const MAX_VISIBLE_CONTACTS = 200;
 
 /**
  * Phone number field with a contact list underneath. Typing works without any
@@ -48,41 +43,21 @@ export default function RecipientPicker({
     setState("loading");
 
     try {
-      const permission = await Contacts.getPermissionsAsync();
-      let status = permission.status;
-      let canAskAgain = permission.canAskAgain !== false;
+      const permission = await contactsAccess(ask);
+      setCanAsk(permission.canAskAgain);
 
-      if (status !== "granted" && ask && canAskAgain) {
-        const asked = await Contacts.requestPermissionsAsync();
-        status = asked.status;
-        canAskAgain = asked.canAskAgain !== false;
-      }
-
-      setCanAsk(canAskAgain);
-      if (status !== "granted") {
+      if (!permission.granted) {
         setState("denied");
         return;
       }
 
-      const { data } = await Contacts.getContactsAsync({
-        fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers],
-      });
-
-      setContacts(
-        data
-          .map((contact) => ({
-            id: contact.id,
-            name: (contact.name || "").trim(),
-            number: cleanNumber(contact.phoneNumbers),
-          }))
-          .filter((contact) => contact.name && contact.number),
-      );
+      setContacts(await loadPhoneContacts());
       setFavorites(
         new Set(listFavorites().map((favorite) => favorite.number)),
       );
       setState("granted");
     } catch {
-      setState("denied");
+      setState("failed");
     }
   }, []);
 
@@ -115,9 +90,20 @@ export default function RecipientPicker({
     const otherRows = matching.filter(
       (contact) => !favorites.has(contact.number),
     );
+
+    // The picker uses a plain ScrollView, so only mount a bounded slice. The
+    // search box still reaches the whole address book.
+    const favoritesFit = favoriteRows.slice(0, MAX_VISIBLE_CONTACTS);
+    const othersFit = otherRows.slice(
+      0,
+      Math.max(0, MAX_VISIBLE_CONTACTS - favoritesFit.length),
+    );
+
     return {
-      favorites: favoriteRows,
-      others: otherRows,
+      favorites: favoritesFit,
+      others: othersFit,
+      hidden:
+        matching.length - favoritesFit.length - othersFit.length > 0,
     };
   }, [contacts, favorites, query]);
 
@@ -128,6 +114,15 @@ export default function RecipientPicker({
       else await Linking.openSettings();
     } catch {
       // The settings screen can fail to open; the button stays available.
+    } finally {
+      setAsking(false);
+    }
+  };
+
+  const retry = async () => {
+    setAsking(true);
+    try {
+      await load(true);
     } finally {
       setAsking(false);
     }
@@ -183,7 +178,7 @@ export default function RecipientPicker({
           ]}
         >
           <PixelIcon
-            name="star"
+            name="heart"
             size={20}
             color={favorite ? colors.accent : colors.muted}
           />
@@ -234,6 +229,19 @@ export default function RecipientPicker({
             style={styles.permissionButton}
           />
         </View>
+      ) : state === "failed" ? (
+        <View style={styles.permissionRow}>
+          <Text style={[type.muted, styles.permissionText]}>
+            Could not read your contacts. Type a number above, or try again.
+          </Text>
+          <AppButton
+            label="Retry"
+            variant="outline"
+            loading={asking}
+            onPress={retry}
+            style={styles.permissionButton}
+          />
+        </View>
       ) : contacts.length === 0 ? (
         <Text style={[type.muted, styles.empty]}>
           No contacts with a phone number.
@@ -272,6 +280,12 @@ export default function RecipientPicker({
               groups.others.length === 0 ? (
                 <Text style={[type.muted, styles.empty]}>
                   No contact matches.
+                </Text>
+              ) : null}
+
+              {groups.hidden ? (
+                <Text style={[type.muted, styles.empty]}>
+                  More contacts match. Use search to narrow the list.
                 </Text>
               ) : null}
             </ScrollView>

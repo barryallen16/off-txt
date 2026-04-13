@@ -12,7 +12,6 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import * as Contacts from "expo-contacts";
 import * as SMS from "expo-sms";
 import { router, useLocalSearchParams } from "expo-router";
 import AppButton from "../components/AppButton";
@@ -20,6 +19,7 @@ import AppHeader from "../components/AppHeader";
 import IconButton from "../components/IconButton";
 import Loading from "../components/Loading";
 import PixelIcon from "../components/PixelIcon";
+import { contactsAccess, loadPhoneContacts } from "../lib/contacts";
 import { listFavorites, toggleFavorite } from "../lib/db";
 import { colors, radius, space, type } from "../lib/theme";
 import {
@@ -28,13 +28,6 @@ import {
   decodeLinkParam,
   parseUpiLink,
 } from "../lib/upi";
-
-function cleanNumber(phoneNumbers) {
-  const entry = phoneNumbers?.find((item) => item.number);
-  if (!entry) return null;
-  const digits = String(entry.number).replace(/[^\d+]/g, "");
-  return digits.length >= 6 ? digits : null;
-}
 
 export default function RecipientsScreen() {
   const { link } = useLocalSearchParams();
@@ -60,46 +53,21 @@ export default function RecipientsScreen() {
     setContactsState("loading");
 
     try {
-      const permission = await Contacts.getPermissionsAsync();
-      let contactStatus = permission.status;
-      let canAskAgain = permission.canAskAgain !== false;
+      const permission = await contactsAccess(ask);
+      setCanAskContacts(permission.canAskAgain);
 
-      if (contactStatus !== "granted" && ask && canAskAgain) {
-        const asked = await Contacts.requestPermissionsAsync();
-        contactStatus = asked.status;
-        canAskAgain = asked.canAskAgain !== false;
-      }
-
-      setCanAskContacts(canAskAgain);
-      if (contactStatus !== "granted") {
+      if (!permission.granted) {
         setContactsState("denied");
         return;
       }
 
-      const { data } = await Contacts.getContactsAsync({
-        fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers],
-      });
-
-      const usable = data
-        .map((contact) => ({
-          id: contact.id,
-          name: (contact.name || "").trim(),
-          number: cleanNumber(contact.phoneNumbers),
-        }))
-        .filter(
-          (contact) =>
-            contact.name &&
-            contact.number &&
-            !/^[\s\d+-]+$/.test(contact.name),
-        );
-
-      setContacts(usable);
+      setContacts(await loadPhoneContacts());
       setFavorites(
         new Set(listFavorites().map((favorite) => favorite.number)),
       );
       setContactsState("granted");
     } catch {
-      setContactsState("denied");
+      setContactsState("failed");
     }
   }, []);
 
@@ -124,6 +92,15 @@ export default function RecipientsScreen() {
       else await Linking.openSettings();
     } catch {
       // The settings screen can fail to open; the button stays available.
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const retryLoad = async () => {
+    setRetrying(true);
+    try {
+      await loadContacts(true);
     } finally {
       setRetrying(false);
     }
@@ -280,6 +257,14 @@ export default function RecipientsScreen() {
 
         {contactsState === "loading" ? (
           <Loading label="Loading contacts" style={styles.fill} />
+        ) : contactsState === "failed" ? (
+          <View style={styles.empty}>
+            <PixelIcon name="user" size={24} color={colors.muted} />
+            <Text style={[type.body, styles.centerText]}>
+              Could not read your contacts. Try again in a moment.
+            </Text>
+            <AppButton label="Retry" loading={retrying} onPress={retryLoad} />
+          </View>
         ) : contactsState === "denied" ? (
           <View style={styles.empty}>
             <PixelIcon name="user" size={24} color={colors.muted} />
@@ -380,7 +365,7 @@ export default function RecipientsScreen() {
                       ]}
                     >
                       <PixelIcon
-                        name="star"
+                        name="heart"
                         size={20}
                         color={favorite ? colors.accent : colors.muted}
                       />

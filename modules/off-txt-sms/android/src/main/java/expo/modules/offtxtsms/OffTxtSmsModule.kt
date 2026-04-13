@@ -9,6 +9,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.provider.ContactsContract
 import android.provider.Telephony
 import android.telephony.SmsManager
 import android.util.Base64
@@ -117,6 +118,56 @@ class OffTxtSmsModule : Module() {
               "date" to it.getLong(it.getColumnIndexOrThrow(Telephony.Sms.DATE))
             )
           )
+        }
+      }
+
+      rows
+    }
+
+    /**
+     * The recipient picker only needs a name and one number per contact.
+     * Querying the phone table directly avoids expo-contacts' full data join
+     * and the long bridge payload that comes with it.
+     */
+    AsyncFunction("readContacts") {
+      if (!granted(Manifest.permission.READ_CONTACTS)) {
+        throw MissingPermissionException(Manifest.permission.READ_CONTACTS)
+      }
+
+      val rows = mutableListOf<Map<String, Any>>()
+      val seen = HashSet<String>()
+      val projection = arrayOf(
+        ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+        ContactsContract.Contacts.DISPLAY_NAME_PRIMARY,
+        ContactsContract.CommonDataKinds.Phone.NUMBER,
+        ContactsContract.CommonDataKinds.Phone.IS_PRIMARY
+      )
+
+      contentResolver().query(
+        ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+        projection,
+        null,
+        null,
+        "${ContactsContract.Contacts.DISPLAY_NAME_PRIMARY} ASC, " +
+          "${ContactsContract.CommonDataKinds.Phone.IS_PRIMARY} DESC"
+      )?.use { cursor ->
+        val idIndex =
+          cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
+        val nameIndex =
+          cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
+        val numberIndex =
+          cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER)
+
+        while (cursor.moveToNext() && rows.size < 5000) {
+          val id = cursor.getLong(idIndex).toString()
+          if (seen.contains(id)) continue
+
+          val name = (cursor.getString(nameIndex) ?: "").trim()
+          val number = (cursor.getString(numberIndex) ?: "").trim()
+          if (name.isEmpty() || number.isEmpty()) continue
+
+          seen.add(id)
+          rows.add(mapOf("id" to id, "name" to name, "number" to number))
         }
       }
 
