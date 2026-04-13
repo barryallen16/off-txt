@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AppState,
   Linking,
@@ -26,9 +26,12 @@ export default function ScannerScreen() {
   const [error, setError] = useState(null);
   const [askingCamera, setAskingCamera] = useState(false);
   const [setup, setSetup] = useState(null);
+  const scanLock = useRef(false);
+  const navTimer = useRef(null);
 
   useFocusEffect(
     useCallback(() => {
+      scanLock.current = false;
       setScanned(false);
       setError(null);
 
@@ -41,6 +44,10 @@ export default function ScannerScreen() {
 
       return () => {
         active = false;
+        if (navTimer.current) {
+          clearTimeout(navTimer.current);
+          navTimer.current = null;
+        }
       };
     }, []),
   );
@@ -76,28 +83,37 @@ export default function ScannerScreen() {
   };
 
   const handleScan = ({ data }) => {
+    if (scanLock.current) return;
+    scanLock.current = true;
     setScanned(true);
+
     const parsed = parseUpiLink(data);
     if (!parsed.valid) {
       setError(parsed.reason);
       return;
     }
 
-    const link = parsed.raw.trim();
-    if (normalizeAmount(parsed.am) != null) {
-      router.push({
-        pathname: "/recipients",
-        params: { link: encodeLinkParam(link) },
-      });
-    } else {
-      router.push({
-        pathname: "/pay/[url]",
-        params: { url: encodeLinkParam(link) },
-      });
-    }
+    // The camera is unmounted by `scanned` above. Give that render a moment to
+    // land before pushing, so the scanner and the next screen never collide.
+    const route =
+      normalizeAmount(parsed.am) != null
+        ? {
+            pathname: "/recipients",
+            params: { link: encodeLinkParam(parsed.raw.trim()) },
+          }
+        : {
+            pathname: "/pay/[url]",
+            params: { url: encodeLinkParam(parsed.raw.trim()) },
+          };
+
+    navTimer.current = setTimeout(() => {
+      navTimer.current = null;
+      router.push(route);
+    }, 80);
   };
 
   const resetScanner = () => {
+    scanLock.current = false;
     setError(null);
     setScanned(false);
   };
@@ -174,23 +190,46 @@ export default function ScannerScreen() {
           </View>
         ) : (
           <View style={styles.viewfinder}>
-            <CameraView
-              style={StyleSheet.absoluteFill}
-              facing={facing}
-              barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-              onBarcodeScanned={scanned ? undefined : handleScan}
-            />
-            <View pointerEvents="none" style={styles.reticle} />
-            <View style={styles.cameraControls}>
-              <IconButton
-                icon="reload"
-                label="Switch camera"
-                onPress={() =>
-                  setFacing((current) => (current === "back" ? "front" : "back"))
-                }
-                style={styles.cameraButton}
-              />
-            </View>
+            {scanned ? (
+              <View style={styles.scanPaused}>
+                <PixelIcon
+                  name={error ? "shield" : "qr"}
+                  size={24}
+                  color={colors.muted}
+                />
+                <Text style={type.muted}>
+                  {error ? "Scan paused" : "Opening code"}
+                </Text>
+              </View>
+            ) : (
+              <>
+                <CameraView
+                  style={StyleSheet.absoluteFill}
+                  facing={facing}
+                  barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+                  onBarcodeScanned={handleScan}
+                  onMountError={(event) =>
+                    setError(
+                      event?.message ||
+                        "Camera could not start. Try reopening this screen.",
+                    )
+                  }
+                />
+                <View pointerEvents="none" style={styles.reticle} />
+                <View style={styles.cameraControls}>
+                  <IconButton
+                    icon="reload"
+                    label="Switch camera"
+                    onPress={() =>
+                      setFacing((current) =>
+                        current === "back" ? "front" : "back",
+                      )
+                    }
+                    style={styles.cameraButton}
+                  />
+                </View>
+              </>
+            )}
           </View>
         )}
 
@@ -271,6 +310,12 @@ const styles = StyleSheet.create({
     marginLeft: -110,
     borderWidth: 1,
     borderColor: colors.line,
+  },
+  scanPaused: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: space.sm,
   },
   cameraControls: {
     position: "absolute",

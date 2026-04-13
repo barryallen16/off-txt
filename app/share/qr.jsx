@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AppState,
   Linking,
@@ -31,6 +31,7 @@ export default function QrShareScreen() {
   const [askingCamera, setAskingCamera] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState(null);
+  const scanLock = useRef(false);
 
   const check = normaliseQr(text);
 
@@ -57,6 +58,11 @@ export default function QrShareScreen() {
   };
 
   const onScan = ({ data }) => {
+    // The camera takes a few frames to unmount. Ignore extra callbacks from
+    // the same code so the review state is not written twice.
+    if (scanLock.current) return;
+    scanLock.current = true;
+
     setText(data ?? "");
     setMode("review");
     setSent(false);
@@ -90,6 +96,7 @@ export default function QrShareScreen() {
   };
 
   const reset = () => {
+    scanLock.current = false;
     setText("");
     setMode("scan");
     setSent(false);
@@ -134,6 +141,12 @@ export default function QrShareScreen() {
           facing="back"
           barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
           onBarcodeScanned={mode === "scan" ? onScan : undefined}
+          onMountError={(event) =>
+            setError(
+              event?.message ||
+                "Camera could not start. Try reopening this screen.",
+            )
+          }
         />
       </View>
     );
@@ -205,7 +218,9 @@ export default function QrShareScreen() {
         <View style={styles.modeRow}>
           <Text
             onPress={() => {
-              setMode(mode === "manual" ? "scan" : "manual");
+              const next = mode === "manual" ? "scan" : "manual";
+              if (next === "scan") scanLock.current = false;
+              setMode(next);
               setSent(false);
             }}
             accessibilityRole="button"
