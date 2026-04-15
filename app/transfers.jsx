@@ -101,7 +101,13 @@ export default function TransfersScreen() {
   useEffect(() => {
     const subscription = DeviceEventEmitter.addListener(
       INBOX_SYNCED_EVENT,
-      () => setItems(listTransfers()),
+      () => {
+        try {
+          setItems(listTransfers());
+        } catch {
+          // Keep the list that is already on screen.
+        }
+      },
     );
     return () => subscription.remove();
   }, []);
