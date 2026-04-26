@@ -12,7 +12,6 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import * as SMS from "expo-sms";
 import { router, useLocalSearchParams } from "expo-router";
 import AppButton from "../components/AppButton";
 import AppHeader from "../components/AppHeader";
@@ -21,6 +20,7 @@ import Loading from "../components/Loading";
 import PixelIcon from "../components/PixelIcon";
 import { contactsAccess, loadPhoneContacts } from "../lib/contacts";
 import { listFavorites, toggleFavorite } from "../lib/db";
+import { ensureSendPermission, sendParts } from "../lib/sms";
 import { colors, radius, space, type } from "../lib/theme";
 import {
   buildRequestLink,
@@ -48,6 +48,7 @@ export default function RecipientsScreen() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState(null);
+  const [statusDetail, setStatusDetail] = useState(null);
 
   const loadContacts = useCallback(async (ask) => {
     setContactsState("loading");
@@ -173,21 +174,26 @@ export default function RecipientsScreen() {
 
     setSending(true);
     setStatus(null);
+    setStatusDetail(null);
     try {
-      const available = await SMS.isAvailableAsync();
-      if (!available) {
-        setStatus("unavailable");
+      if (!(await ensureSendPermission())) {
+        setStatus("failed");
+        setStatusDetail("SMS permission is needed to send requests.");
         return;
       }
 
-      const { result } = await SMS.sendSMSAsync(numbers, message);
-      if (result === "sent") {
+      let failed = null;
+      for (const number of numbers) {
+        const result = await sendParts(number, [message]);
+        if (!result.sent && !failed) failed = result.reason;
+      }
+
+      if (failed) {
+        setStatus("failed");
+        setStatusDetail(failed);
+      } else {
         setStatus("sent");
         setSelectedIds([]);
-      } else if (result === "cancelled") {
-        setStatus("cancelled");
-      } else {
-        setStatus("unknown");
       }
     } catch {
       setStatus("failed");
@@ -229,12 +235,10 @@ export default function RecipientsScreen() {
     );
   }
 
-  const statusMessage = {
-    cancelled: "Request cancelled. Nothing was sent.",
-    unknown: "Check your Messages app to confirm the request was sent.",
-    unavailable: "No SMS app is available on this device.",
-    failed: "Could not open the Messages app. Try again.",
-  }[status];
+  const statusMessage =
+    status === "failed"
+      ? statusDetail || "Could not send the request. Try again."
+      : null;
 
   return (
     <SafeAreaView style={styles.screen} edges={["bottom"]}>
