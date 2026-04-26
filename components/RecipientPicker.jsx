@@ -3,7 +3,7 @@ import {
   AppState,
   Linking,
   Pressable,
-  ScrollView,
+  SectionList,
   StyleSheet,
   Text,
   TextInput,
@@ -16,12 +16,12 @@ import { contactsAccess, loadPhoneContacts } from "../lib/contacts";
 import { listFavorites, toggleFavorite } from "../lib/db";
 import { colors, radius, space, type } from "../lib/theme";
 
-const MAX_VISIBLE_CONTACTS = 200;
-
 /**
  * Phone number field with a contact list underneath. Typing works without any
  * contact permission, the list only shows up when it is granted. Favorite
  * contacts are pinned to the top of the list.
+ *
+ * The list is virtualised: a large address book must not mount every row.
  *
  * @param {{ selected: { number: string, name?: string | null } | null,
  *   onSelect: (value: { number: string, name?: string | null } | null) => void,
@@ -73,7 +73,7 @@ export default function RecipientPicker({
     return () => subscription.remove();
   }, [state, load]);
 
-  const groups = useMemo(() => {
+  const sections = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const matching = contacts.filter(
       (contact) =>
@@ -91,20 +91,14 @@ export default function RecipientPicker({
       (contact) => !favorites.has(contact.number),
     );
 
-    // The picker uses a plain ScrollView, so only mount a bounded slice. The
-    // search box still reaches the whole address book.
-    const favoritesFit = favoriteRows.slice(0, MAX_VISIBLE_CONTACTS);
-    const othersFit = otherRows.slice(
-      0,
-      Math.max(0, MAX_VISIBLE_CONTACTS - favoritesFit.length),
-    );
-
-    return {
-      favorites: favoritesFit,
-      others: othersFit,
-      hidden:
-        matching.length - favoritesFit.length - othersFit.length > 0,
-    };
+    const result = [];
+    if (favoriteRows.length > 0) {
+      result.push({ title: "FAVORITES", data: favoriteRows });
+    }
+    if (otherRows.length > 0) {
+      result.push({ title: "CONTACTS", data: otherRows });
+    }
+    return result;
   }, [contacts, favorites, query]);
 
   const allow = async () => {
@@ -261,34 +255,30 @@ export default function RecipientPicker({
               />
             </View>
 
-            <ScrollView
+            <SectionList
+              sections={sections}
+              keyExtractor={(contact) => contact.id}
+              initialNumToRender={15}
+              maxToRenderPerBatch={20}
+              windowSize={7}
+              removeClippedSubviews
+              stickySectionHeadersEnabled={false}
               style={styles.list}
+              contentContainerStyle={styles.listContent}
               keyboardShouldPersistTaps="handled"
               nestedScrollEnabled
-            >
-              {groups.favorites.length > 0 ? (
-                <Text style={[type.label, styles.groupLabel]}>FAVORITES</Text>
-              ) : null}
-              {groups.favorites.map(renderContact)}
-
-              {groups.others.length > 0 ? (
-                <Text style={[type.label, styles.groupLabel]}>CONTACTS</Text>
-              ) : null}
-              {groups.others.map(renderContact)}
-
-              {groups.favorites.length === 0 &&
-              groups.others.length === 0 ? (
+              renderSectionHeader={({ section }) => (
+                <Text style={[type.label, styles.groupLabel]}>
+                  {section.title}
+                </Text>
+              )}
+              renderItem={({ item }) => renderContact(item)}
+              ListEmptyComponent={
                 <Text style={[type.muted, styles.empty]}>
                   No contact matches.
                 </Text>
-              ) : null}
-
-              {groups.hidden ? (
-                <Text style={[type.muted, styles.empty]}>
-                  More contacts match. Use search to narrow the list.
-                </Text>
-              ) : null}
-            </ScrollView>
+              }
+            />
           </>
         )
       )}
@@ -328,6 +318,9 @@ const styles = StyleSheet.create({
   },
   list: {
     maxHeight: 240,
+  },
+  listContent: {
+    paddingBottom: space.xs,
   },
   groupLabel: {
     paddingTop: space.sm,
