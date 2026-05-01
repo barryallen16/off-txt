@@ -1,20 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import AppButton from "../../components/AppButton";
 import AppHeader from "../../components/AppHeader";
 import PixelIcon from "../../components/PixelIcon";
 import RecipientPicker from "../../components/RecipientPicker";
-import { formatAge } from "../../lib/geo";
-import { newSessionId } from "../../lib/geo";
-import { readFix, requestLocationAccess, shareLocation } from "../../lib/locationShare";
+import { formatAge, newSessionId } from "../../lib/geo";
+import { requestLocationAccess } from "../../lib/locationShare";
+import {
+  getLocationShareState,
+  isLocationShareRunning,
+  startLocationShare,
+  stopLocationShare,
+} from "../../lib/locationTask";
 import { hasSendPermission, requestSmsPermissions } from "../../lib/sms";
 import { colors, radius, space, type } from "../../lib/theme";
 
@@ -30,91 +29,101 @@ export default function LocationShareScreen() {
   const [running, setRunning] = useState(false);
   const [sentCount, setSentCount] = useState(0);
   const [last, setLast] = useState(null);
-  const [pending, setPending] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState(null);
 
-  const timer = useRef(null);
-  const recipientRef = useRef(null);
-  const intervalRef = useRef(60);
-  const runningRef = useRef(false);
-  const runId = useRef(0);
-  const sessionRef = useRef(newSessionId());
+  const mounted = useRef(true);
+  const poll = useRef(null);
+  const session = useRef(null);
 
-  recipientRef.current = recipient;
-  intervalRef.current = intervalSec;
+  const refresh = useCallback(() => {
+    if (!mounted.current) return;
 
-  const sendFix = useCallback(async () => {
-    const address = recipientRef.current?.number;
-    if (!address) return false;
+    const state = getLocationShareState();
+    setSentCount(state.sentCount);
+    setLast(
+      state.lastFix
+        ? { fix: state.lastFix, at: state.lastAt ?? Date.now() }
+        : null,
+    );
+    setError(state.error || null);
+    if (!state.active) setRunning(false);
+  }, []);
 
-    setPending(true);
-    try {
-      const fix = await readFix();
-      const result = await shareLocation({
-        address,
-        session: sessionRef.current,
-        fix,
-      });
-
-      if (result.sent) {
-        setLast({ fix, at: Date.now(), parts: result.parts });
-        setSentCount((count) => count + 1);
-        setError(null);
-        return true;
-      }
-
-      setError(result.reason ?? "The message did not leave the phone.");
-      return false;
-    } catch (failure) {
-      setError(failure?.message ?? "Could not read your location.");
-      return false;
-    } finally {
-      setPending(false);
+  const stopPolling = useCallback(() => {
+    if (poll.current) {
+      clearInterval(poll.current);
+      poll.current = null;
     }
   }, []);
 
-  const stop = useCallback(() => {
-    runId.current += 1;
-    runningRef.current = false;
-    if (timer.current) {
-      clearInterval(timer.current);
-      timer.current = null;
-    }
-    setRunning(false);
-  }, []);
+  const startPolling = useCallback(() => {
+    if (poll.current) return;
+    poll.current = setInterval(refresh, 2000);
+  }, [refresh]);
 
-  useEffect(() => stop, [stop]);
+  // The foreground service may still be running from a previous session, or
+  // from before the app was killed. Reflect that instead of showing "stopped".
+  useEffect(() => {
+    mounted.current = true;
+    let cancelled = false;
+
+    isLocationShareRunning()
+      .then((active) => {
+        if (cancelled || !active) return;
+
+        const state = getLocationShareState();
+        if (state.address) {
+          setRecipient({ number: state.address, name: null });
+        }
+        session.current = state.session;
+        setIntervalSec(state.intervalSec);
+        setSentCount(state.sentCount);
+        setRunning(true);
+        setError(state.error);
+        refresh();
+        startPolling();
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      mounted.current = false;
+      stopPolling();
+    };
+  }, [refresh, startPolling, stopPolling]);
 
   const start = async () => {
-    if (!recipient?.number || running || runningRef.current || starting) return;
+    if (!recipient?.number || running || starting) return;
+
     setError(null);
     setStarting(true);
-    const run = ++runId.current;
 
     try {
       const access = await requestLocationAccess();
-      if (runId.current !== run) return;
       if (!access.granted) {
         setError(access.reason);
         return;
       }
 
       const allowed = hasSendPermission() || (await requestSmsPermissions());
-      if (runId.current !== run) return;
       if (!allowed) {
         setError("SMS permission is needed to send location updates.");
         return;
       }
 
-      sessionRef.current = newSessionId();
-      setSentCount(0);
-      runningRef.current = true;
-      setRunning(true);
+      session.current = newSessionId();
+      await startLocationShare({
+        address: recipient.number,
+        session: session.current,
+        intervalSec,
+        reset: true,
+      });
 
-      await sendFix();
-      if (!runningRef.current || runId.current !== run) return;
-      timer.current = setInterval(sendFix, intervalRef.current * 1000);
+      setRunning(true);
+      setSentCount(0);
+      setLast(null);
+      startPolling();
     } catch (failure) {
       setError(failure?.message ?? "Could not start sharing.");
     } finally {
@@ -122,18 +131,31 @@ export default function LocationShareScreen() {
     }
   };
 
-  const changeInterval = (seconds) => {
-    setIntervalSec(seconds);
-    intervalRef.current = seconds;
+  const stop = async () => {
+    stopPolling();
+    setRunning(false);
+    await stopLocationShare();
+    refresh();
+  };
 
-    if (running && timer.current) {
-      clearInterval(timer.current);
-      timer.current = setInterval(sendFix, seconds * 1000);
+  const changeInterval = async (seconds) => {
+    setIntervalSec(seconds);
+
+    if (!running || !recipient?.number || !session.current) return;
+
+    try {
+      await startLocationShare({
+        address: recipient.number,
+        session: session.current,
+        intervalSec: seconds,
+        reset: false,
+      });
+    } catch (failure) {
+      setError(failure?.message ?? "Could not change the interval.");
     }
   };
 
   const goBack = () => {
-    stop();
     if (router.canGoBack()) router.back();
     else router.replace("/");
   };
@@ -175,18 +197,14 @@ export default function LocationShareScreen() {
 
         <View style={styles.status}>
           <View style={styles.statusRow}>
-            {pending ? (
-              <ActivityIndicator size="small" color={colors.muted} />
-            ) : (
-              <PixelIcon
-                name="location"
-                size={16}
-                color={running ? colors.text : colors.muted}
-              />
-            )}
+            <PixelIcon
+              name="location"
+              size={16}
+              color={running ? colors.text : colors.muted}
+            />
             <Text style={type.bodyMedium}>
               {running
-                ? `Sharing every ${intervalRef.current} s`
+                ? `Sharing every ${intervalSec} s`
                 : "Not sharing"}
             </Text>
           </View>
@@ -208,8 +226,8 @@ export default function LocationShareScreen() {
         </View>
 
         <Text style={[type.muted, styles.note]}>
-          One SMS per update, so every ping costs a message. Android pauses the
-          timer when the screen is off; keep this screen open while tracking.
+          Sending continues with the screen off, using an Android foreground
+          service and the ongoing notification. Each update costs one SMS.
         </Text>
       </ScrollView>
 

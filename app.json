@@ -31,7 +31,11 @@
         "android.permission.READ_CONTACTS",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.SEND_SMS",
-        "android.permission.READ_SMS"
+        "android.permission.READ_SMS",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.WAKE_LOCK"
       ],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",
@@ -58,7 +62,10 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to read your location so you can text it to a contact."
+          "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to read your location so you can text it to a contact.",
+          "locationAlwaysAndWhenInUsePermission": "Allow $(PRODUCT_NAME) to share your live location with a contact while sharing is on.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       [
