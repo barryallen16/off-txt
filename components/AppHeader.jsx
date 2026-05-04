@@ -64,6 +64,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.sm,
   },
   quota: {
+    fontSize: 10,
+    letterSpacing: 0.5,
     fontVariant: ["tabular-nums"],
   },
   quotaLow: {
