@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "off-txt",
+    "slug": "off-txt",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/off-txt-logo-dark.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/off-txt-logo-dark.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/off-txt-logo-dark.png",
+        "backgroundColor": "#000000"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.barryallen16.offtxt"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/BebasNeue-Regular.ttf",
+            "./assets/fonts/UbuntuMono-Regular.ttf"
+          ]
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera",
+          "barcodeScannerEnabled": true
+        }
+      ]
+    ]
+  }
+}
