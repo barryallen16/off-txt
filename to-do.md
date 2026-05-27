@@ -1,0 +1,4 @@
+-  There should a functionality for checking if the QR data has the amount specified in it , if it is specified then the AmountScreen should be skipped.
+- send codes , and those codes will be rendered as meme templates or stickers on both the sides . just like how emojies are sent as unicode text and rendered as emojis
+- Have a counter at the top right corner showing the usage of the 100 sms. For now, default to assuming that the user are sending sms only via off-txt and refresh the 100 sms count at midnight
+- 
