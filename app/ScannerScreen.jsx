@@ -1,4 +1,3 @@
-
 import { StatusBar } from "expo-status-bar";
 import {
   Alert,
@@ -13,7 +12,6 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { CameraView, CameraType, useCameraPermissions } from "expo-camera";
 import { useState } from "react";
 import { router } from "expo-router";
-
 export default function ScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState("back");
@@ -42,7 +40,6 @@ export default function ScannerScreen() {
     setScanned(true);
     router.push({ pathname: "pay/[url]", params: { baseUrl: data } });
   };
-  
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
@@ -53,14 +50,6 @@ export default function ScannerScreen() {
           onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
         ></CameraView>
         <View style={styles.buttonContainer}>
-          {/* Navigate to Offline SMS Payments */}
-          <TouchableOpacity 
-            style={styles.button} 
-            onPress={() => router.push('/sms-payments')}
-          >
-            <Ionicons name="chatbubble-ellipses" size={24} color="black" />
-          </TouchableOpacity>
-
           <TouchableOpacity style={styles.button} onPress={toggleCameraFace}>
             <Ionicons name="sync" size={30} color="black" />
           </TouchableOpacity>
@@ -107,10 +96,6 @@ const styles = StyleSheet.create({
     backgroundColor: "yellow",
     padding: 8,
     borderRadius: 40,
-    width: 60,
-    height: 60,
-    alignItems: "center",
-    justifyContent: "center"
   },
   text: {
     fontSize: 18,
